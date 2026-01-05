@@ -135,7 +135,7 @@ export default function AppShell() {
             <div className="topbar-left">
               <div>
                 <p className="page-title">{routeTitle(location.pathname)}</p>
-                <span className="small-muted">Ocean Professional · Elegant</span>
+                <span className="small-muted">Ocean Professional · Fintech</span>
               </div>
 
               <label className="search" aria-label="Global search">
