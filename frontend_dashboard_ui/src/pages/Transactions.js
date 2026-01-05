@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import PageSection from '../components/PageSection';
 import { useUI } from '../context/UIContext';
+import { useAlerts } from '../context/AlertsContext';
+import { subscribeToNewTransactions } from '../services/transactionsRealtime';
 
 function currency(n) {
   return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
@@ -18,7 +20,24 @@ const sample = [
 export default function Transactions() {
   /** Transactions list page (placeholder); includes local filter controls. */
   const { searchQuery } = useUI();
+  const { addAlert } = useAlerts();
   const [category, setCategory] = useState('all');
+
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToNewTransactions(() => {
+      const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      addAlert({
+        type: 'success',
+        title: 'New transaction received',
+        message: `Transaction list updated at ${ts}.`,
+      });
+      setRefreshTick((t) => t + 1);
+    });
+
+    return () => unsubscribe();
+  }, [addAlert]);
 
   const categories = useMemo(() => {
     const set = new Set(sample.map((t) => t.category));
@@ -32,7 +51,7 @@ export default function Transactions() {
       const matchesCategory = category === 'all' || t.category === category;
       return matchesQuery && matchesCategory;
     });
-  }, [searchQuery, category]);
+  }, [searchQuery, category, refreshTick]);
 
   return (
     <div>

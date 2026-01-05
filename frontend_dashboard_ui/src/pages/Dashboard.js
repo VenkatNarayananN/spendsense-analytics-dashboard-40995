@@ -1,8 +1,10 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import PageSection from '../components/PageSection';
 import { useUI } from '../context/UIContext';
+import { useAlerts } from '../context/AlertsContext';
 import LineChartPlaceholder from '../components/charts/LineChartPlaceholder';
 import PieChartPlaceholder from '../components/charts/PieChartPlaceholder';
+import { subscribeToNewTransactions } from '../services/transactionsRealtime';
 
 function currency(n) {
   return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
@@ -17,6 +19,28 @@ function percent(n) {
 export default function Dashboard() {
   /** Dashboard overview page with KPI cards and recent activity placeholder data. */
   const { searchQuery } = useUI();
+  const { addAlert } = useAlerts();
+
+  // Used to trigger re-fetches later when dashboard data becomes API-driven.
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToNewTransactions((payload) => {
+      // Notify user (subtle alert on the alerts rail).
+      const ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      addAlert({
+        type: 'success',
+        title: 'New transaction received',
+        message: `A new transaction was added at ${ts}.`,
+      });
+
+      // Trigger a refresh. Today this is a no-op visually (placeholder data),
+      // but it ensures the wiring is ready once we fetch real KPIs/recent activity.
+      setRefreshTick((t) => t + 1);
+    });
+
+    return () => unsubscribe();
+  }, [addAlert]);
 
   const kpis = useMemo(() => ([
     { label: 'Monthly spend', value: currency(2480.12), sub: `${percent(0.06)} vs last month` },
@@ -30,7 +54,7 @@ export default function Dashboard() {
     { id: 't2', merchant: 'Metro Transit', category: 'Transport', amount: -2.50, date: 'Yesterday' },
     { id: 't3', merchant: 'Nimbus Payroll', category: 'Income', amount: 2250.00, date: '2 days ago' },
     { id: 't4', merchant: 'StreamFlix', category: 'Subscriptions', amount: -14.99, date: '3 days ago' },
-  ]), []);
+  ]), [refreshTick]);
 
   const filteredRecent = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
