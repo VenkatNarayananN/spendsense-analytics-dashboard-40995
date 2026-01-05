@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import PageSection from '../components/PageSection';
 import { useAlerts } from '../context/AlertsContext';
+import LineChartPlaceholder from '../components/charts/LineChartPlaceholder';
+import BarChartPlaceholder from '../components/charts/BarChartPlaceholder';
 
 // PUBLIC_INTERFACE
 export default function Insights() {
@@ -45,6 +47,15 @@ export default function Insights() {
         }
       >
         <div className="grid">
+          <div style={{ gridColumn: 'span 7' }}>
+            <LineChartPlaceholder title="Forecast vs. actual spend" />
+          </div>
+          <div style={{ gridColumn: 'span 5' }}>
+            <BarChartPlaceholder title="Top categories (last 30 days)" />
+          </div>
+        </div>
+
+        <div className="grid" style={{ marginTop: 14 }}>
           {insights.map((i) => (
             <div key={i.title} className="card" style={{ gridColumn: 'span 6' }}>
               <div className="card-title-row">

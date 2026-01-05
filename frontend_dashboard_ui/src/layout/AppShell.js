@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useUI } from '../context/UIContext';
 import { useAlerts } from '../context/AlertsContext';
+import { useAuth } from '../context/AuthContext';
 import { getBackendUrl } from '../config/env';
 
 function Icon({ label }) {
@@ -22,12 +23,75 @@ export default function AppShell() {
   /** Main app layout: sidebar + topbar + content + persistent alerts rail. */
   const { theme, toggleTheme, searchQuery, setSearchQuery } = useUI();
   const { alerts, dismissAlert, clearAlerts } = useAlerts();
+  const { isAuthenticated, toggleAuth } = useAuth();
   const location = useLocation();
 
   const backendUrl = getBackendUrl();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const navLinks = useMemo(() => ([
+    { to: '/', label: 'Dashboard', icon: '⌁', badge: 'Home', end: true },
+    { to: '/transactions', label: 'Transactions', icon: '⟐', badge: 'List' },
+    { to: '/insights', label: 'Insights', icon: '◈', badge: 'Trends' },
+    { to: '/alerts', label: 'Alerts', icon: '⟁', badge: String(alerts.length) },
+    { to: '/settings', label: 'Settings', icon: '⟡', badge: 'Prefs' },
+  ]), [alerts.length]);
+
+  // Close the mobile menu when navigation occurs.
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
 
   return (
     <div className="App">
+      {/* Responsive top navbar (small screens) */}
+      <header className="topnav" role="navigation" aria-label="Top navigation">
+        <div className="topnav-left">
+          <button
+            type="button"
+            className="hamburger"
+            aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={mobileMenuOpen ? 'true' : 'false'}
+            onClick={() => setMobileMenuOpen((v) => !v)}
+          >
+            {/* Simple hamburger glyph; keep consistent with lightweight, no-icons approach */}
+            ☰
+          </button>
+
+          <div className="topnav-title">
+            <strong>SpendSense</strong>
+            <span>{routeTitle(location.pathname)}</span>
+          </div>
+        </div>
+
+        <div className="topnav-actions">
+          <button type="button" className="btn" onClick={toggleTheme} aria-label="Toggle theme">
+            {theme === 'light' ? 'Dark' : 'Light'}
+          </button>
+        </div>
+      </header>
+
+      <div className={mobileMenuOpen ? 'mobile-menu open' : 'mobile-menu'} aria-label="Mobile menu">
+        {navLinks.map((l) => (
+          <NavLink key={l.to} to={l.to} end={Boolean(l.end)}>
+            <span className="mobile-menu-row">
+              <Icon label={l.icon} />
+              <span style={{ fontWeight: 800 }}>{l.label}</span>
+            </span>
+            <span className="badge">{l.badge}</span>
+          </NavLink>
+        ))}
+
+        <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
+          <button type="button" className="btn" onClick={toggleAuth}>
+            {isAuthenticated ? 'Simulate logout (mock)' : 'Simulate login (mock)'}
+          </button>
+          <div className="small-muted">
+            Protected routes: <span className="mono">/insights</span>, <span className="mono">/alerts</span>
+          </div>
+        </div>
+      </div>
+
       <div className="app-shell">
         <aside className="sidebar" aria-label="Primary navigation">
           <div className="brand">
@@ -39,45 +103,15 @@ export default function AppShell() {
           </div>
 
           <nav className="nav">
-            <NavLink to="/" end>
-              <span className="nav-item-left">
-                <Icon label="⌁" />
-                <span className="nav-label">Dashboard</span>
-              </span>
-              <span className="badge">Home</span>
-            </NavLink>
-
-            <NavLink to="/transactions">
-              <span className="nav-item-left">
-                <Icon label="⟐" />
-                <span className="nav-label">Transactions</span>
-              </span>
-              <span className="badge">List</span>
-            </NavLink>
-
-            <NavLink to="/insights">
-              <span className="nav-item-left">
-                <Icon label="◈" />
-                <span className="nav-label">Insights</span>
-              </span>
-              <span className="badge">Trends</span>
-            </NavLink>
-
-            <NavLink to="/alerts">
-              <span className="nav-item-left">
-                <Icon label="⟁" />
-                <span className="nav-label">Alerts</span>
-              </span>
-              <span className="badge">{alerts.length}</span>
-            </NavLink>
-
-            <NavLink to="/settings">
-              <span className="nav-item-left">
-                <Icon label="⟡" />
-                <span className="nav-label">Settings</span>
-              </span>
-              <span className="badge">Prefs</span>
-            </NavLink>
+            {navLinks.map((l) => (
+              <NavLink key={l.to} to={l.to} end={Boolean(l.end)}>
+                <span className="nav-item-left">
+                  <Icon label={l.icon} />
+                  <span className="nav-label">{l.label}</span>
+                </span>
+                <span className="badge">{l.badge}</span>
+              </NavLink>
+            ))}
           </nav>
 
           <div className="sidebar-footer">
@@ -87,6 +121,12 @@ export default function AppShell() {
             <div className="small-muted">
               Theme: <span className="mono">{theme}</span>
             </div>
+            <div className="small-muted" style={{ marginTop: 8 }}>
+              Auth (mock): <span className="mono">{isAuthenticated ? 'authed' : 'guest'}</span>
+            </div>
+            <button type="button" className="btn" style={{ marginTop: 10, width: '100%' }} onClick={toggleAuth}>
+              {isAuthenticated ? 'Simulate logout' : 'Simulate login'}
+            </button>
           </div>
         </aside>
 
@@ -111,6 +151,15 @@ export default function AppShell() {
             <div className="topbar-actions">
               <button type="button" className="btn" onClick={toggleTheme} aria-label="Toggle theme">
                 {theme === 'light' ? 'Dark mode' : 'Light mode'}
+              </button>
+
+              <button
+                type="button"
+                className="btn"
+                onClick={toggleAuth}
+                aria-label={isAuthenticated ? 'Simulate logout' : 'Simulate login'}
+              >
+                {isAuthenticated ? 'Logout (mock)' : 'Login (mock)'}
               </button>
 
               <button

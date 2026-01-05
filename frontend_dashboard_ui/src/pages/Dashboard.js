@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import PageSection from '../components/PageSection';
 import { useUI } from '../context/UIContext';
+import LineChartPlaceholder from '../components/charts/LineChartPlaceholder';
+import PieChartPlaceholder from '../components/charts/PieChartPlaceholder';
 
 function currency(n) {
   return n.toLocaleString(undefined, { style: 'currency', currency: 'USD' });
@@ -53,39 +55,17 @@ export default function Dashboard() {
       </div>
 
       <div className="grid">
-        <div className="card" style={{ gridColumn: 'span 7' }}>
-          <div className="card-title-row">
-            <h2 style={{ fontSize: 16, margin: 0 }}>Spending trend</h2>
-            <span className="pill pill-warn">
-              <span className="pill-dot" aria-hidden="true" />
-              Placeholder
-            </span>
-          </div>
-          <div className="small-muted" style={{ marginTop: 6 }}>
-            A chart will be rendered here (e.g., via Recharts) once API wiring is added.
-          </div>
-
-          <div
-            className="card"
-            style={{
-              marginTop: 12,
-              padding: 12,
-              background: 'rgba(244, 114, 182, 0.08)',
-              borderColor: 'rgba(244, 114, 182, 0.20)',
-            }}
-          >
+        <div style={{ gridColumn: 'span 7' }}>
+          <LineChartPlaceholder title="Spending trend" />
+          <div className="card" style={{ marginTop: 12 }}>
             <div className="small-muted">
               Tip: Connect <span className="mono">REACT_APP_BACKEND_URL</span> to fetch real analytics.
             </div>
           </div>
         </div>
 
-        <div className="card" style={{ gridColumn: 'span 5' }}>
-          <h2 style={{ fontSize: 16, margin: 0 }}>Category mix</h2>
-          <div className="small-muted" style={{ marginTop: 6 }}>
-            Elegant donut chart placeholder. Categories: Housing, Dining, Transport, Subscriptions.
-          </div>
-
+        <div style={{ gridColumn: 'span 5' }}>
+          <PieChartPlaceholder title="Category mix" />
           <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
             <div className="pill pill-success"><span className="pill-dot" /> Housing · 38%</div>
             <div className="pill pill-warn"><span className="pill-dot" /> Dining · 16%</div>

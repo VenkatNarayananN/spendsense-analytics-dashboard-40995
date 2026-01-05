@@ -3,5 +3,6 @@ import App from './App';
 
 test('renders SpendSense shell', () => {
   render(<App />);
-  expect(screen.getByText(/SpendSense/i)).toBeInTheDocument();
+  // SpendSense appears in the navigation/branding; keep assertion broad to avoid churn.
+  expect(screen.getAllByText(/SpendSense/i).length).toBeGreaterThan(0);
 });

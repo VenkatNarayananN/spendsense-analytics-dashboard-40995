@@ -4,6 +4,9 @@ import './App.css';
 
 import { UIProvider } from './context/UIContext';
 import { AlertsProvider } from './context/AlertsContext';
+import { AuthProvider } from './context/AuthContext';
+
+import ProtectedRoute from './routes/ProtectedRoute';
 
 import AppShell from './layout/AppShell';
 
@@ -18,23 +21,42 @@ import NotFound from './pages/NotFound';
 function App() {
   /** Root application entrypoint: provides contexts + router + main layout shell. */
   return (
-    <UIProvider>
-      <AlertsProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route element={<AppShell />}>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/transactions" element={<Transactions />} />
-              <Route path="/insights" element={<Insights />} />
-              <Route path="/alerts" element={<Alerts />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/home" element={<Navigate to="/" replace />} />
-              <Route path="*" element={<NotFound />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
-      </AlertsProvider>
-    </UIProvider>
+    <AuthProvider>
+      <UIProvider>
+        <AlertsProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route element={<AppShell />}>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/transactions" element={<Transactions />} />
+
+                <Route
+                  path="/insights"
+                  element={(
+                    <ProtectedRoute>
+                      <Insights />
+                    </ProtectedRoute>
+                  )}
+                />
+
+                <Route
+                  path="/alerts"
+                  element={(
+                    <ProtectedRoute>
+                      <Alerts />
+                    </ProtectedRoute>
+                  )}
+                />
+
+                <Route path="/settings" element={<Settings />} />
+                <Route path="/home" element={<Navigate to="/" replace />} />
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </AlertsProvider>
+      </UIProvider>
+    </AuthProvider>
   );
 }
 
