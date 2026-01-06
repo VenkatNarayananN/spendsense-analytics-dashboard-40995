@@ -28,9 +28,33 @@ function App() {
           <BrowserRouter>
             <Routes>
               <Route element={<AppShell />}>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/auth/callback" element={<AuthCallback />} />
-                <Route path="/transactions" element={<Transactions />} />
+                {/* Protected routes */}
+                <Route
+                  path="/"
+                  element={(
+                    <ProtectedRoute>
+                      <Dashboard />
+                    </ProtectedRoute>
+                  )}
+                />
+
+                <Route
+                  path="/dashboard"
+                  element={(
+                    <ProtectedRoute>
+                      <Dashboard />
+                    </ProtectedRoute>
+                  )}
+                />
+
+                <Route
+                  path="/transactions"
+                  element={(
+                    <ProtectedRoute>
+                      <Transactions />
+                    </ProtectedRoute>
+                  )}
+                />
 
                 <Route
                   path="/insights"
@@ -50,8 +74,21 @@ function App() {
                   )}
                 />
 
-                <Route path="/settings" element={<Settings />} />
+                <Route
+                  path="/settings"
+                  element={(
+                    <ProtectedRoute>
+                      <Settings />
+                    </ProtectedRoute>
+                  )}
+                />
+
+                {/* Auth callback (must remain public to complete OAuth redirect) */}
+                <Route path="/auth/callback" element={<AuthCallback />} />
+
+                {/* Back-compat */}
                 <Route path="/home" element={<Navigate to="/" replace />} />
+
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Routes>
