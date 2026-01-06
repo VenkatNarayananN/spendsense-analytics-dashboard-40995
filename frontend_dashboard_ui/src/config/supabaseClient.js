@@ -31,10 +31,15 @@ export function getSupabase() {
 
   cachedClient = createClient(url, anonKey, {
     auth: {
-      // This app currently does not implement Supabase Auth; avoid storing sessions.
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
+      /**
+       * Enable Supabase Auth:
+       * - persistSession: keeps the user logged in across refreshes
+       * - autoRefreshToken: keeps the session fresh
+       * - detectSessionInUrl: required for OAuth redirects (Supabase parses tokens from URL)
+       */
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
     },
     realtime: {
       // Keep defaults; can be tuned later if needed.

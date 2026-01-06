@@ -15,6 +15,7 @@ import Transactions from './pages/Transactions';
 import Insights from './pages/Insights';
 import Alerts from './pages/Alerts';
 import Settings from './pages/Settings';
+import AuthCallback from './pages/AuthCallback';
 import NotFound from './pages/NotFound';
 
 // PUBLIC_INTERFACE
@@ -28,6 +29,7 @@ function App() {
             <Routes>
               <Route element={<AppShell />}>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/transactions" element={<Transactions />} />
 
                 <Route

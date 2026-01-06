@@ -23,7 +23,15 @@ export default function AppShell() {
   /** Main app layout: sidebar + topbar + content + persistent alerts rail. */
   const { theme, toggleTheme, searchQuery, setSearchQuery } = useUI();
   const { alerts, dismissAlert, clearAlerts } = useAlerts();
-  const { isAuthenticated, toggleAuth } = useAuth();
+  const {
+    isAuthenticated,
+    isSupabaseConfigured,
+    isLoading: authLoading,
+    user,
+    authError,
+    signInWithGoogle,
+    signOut,
+  } = useAuth();
   const location = useLocation();
 
   const backendUrl = getBackendUrl();
@@ -83,12 +91,41 @@ export default function AppShell() {
         ))}
 
         <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
-          <button type="button" className="btn" onClick={toggleAuth}>
-            {isAuthenticated ? 'Simulate logout (mock)' : 'Simulate login (mock)'}
+          <button
+            type="button"
+            className={isAuthenticated ? 'btn' : 'btn btn-primary'}
+            onClick={async () => {
+              if (authLoading) return;
+              if (isAuthenticated) {
+                await signOut();
+              } else {
+                await signInWithGoogle();
+              }
+            }}
+            disabled={authLoading}
+            aria-label={isAuthenticated ? 'Sign out' : 'Sign in with Google'}
+          >
+            {authLoading ? 'Please wait…' : isAuthenticated ? 'Sign out' : 'Sign in with Google'}
           </button>
-          <div className="small-muted">
-            Protected routes: <span className="mono">/insights</span>, <span className="mono">/alerts</span>
-          </div>
+
+          {!isSupabaseConfigured ? (
+            <div className="small-muted">
+              Auth is disabled (missing <span className="mono">REACT_APP_SUPABASE_URL</span> /
+              <span className="mono"> REACT_APP_SUPABASE_KEY</span>).
+            </div>
+          ) : authError ? (
+            <div className="small-muted">
+              <span className="mono">Auth:</span> {authError}
+            </div>
+          ) : isAuthenticated && user?.email ? (
+            <div className="small-muted">
+              Signed in as <span className="mono">{user.email}</span>
+            </div>
+          ) : (
+            <div className="small-muted">
+              Protected routes: <span className="mono">/insights</span>, <span className="mono">/alerts</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -122,10 +159,38 @@ export default function AppShell() {
               Theme: <span className="mono">{theme}</span>
             </div>
             <div className="small-muted" style={{ marginTop: 8 }}>
-              Auth (mock): <span className="mono">{isAuthenticated ? 'authed' : 'guest'}</span>
+              Auth: <span className="mono">{isAuthenticated ? 'signed-in' : 'guest'}</span>
             </div>
-            <button type="button" className="btn" style={{ marginTop: 10, width: '100%' }} onClick={toggleAuth}>
-              {isAuthenticated ? 'Simulate logout' : 'Simulate login'}
+            {isAuthenticated && user?.email ? (
+              <div className="small-muted" style={{ marginTop: 6 }}>
+                User: <span className="mono">{user.email}</span>
+              </div>
+            ) : null}
+            {!isSupabaseConfigured ? (
+              <div className="small-muted" style={{ marginTop: 6 }}>
+                Supabase auth not configured.
+              </div>
+            ) : null}
+            {authError ? (
+              <div className="small-muted" style={{ marginTop: 6 }}>
+                <span className="mono">Error:</span> {authError}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className={isAuthenticated ? 'btn' : 'btn btn-primary'}
+              style={{ marginTop: 10, width: '100%' }}
+              onClick={async () => {
+                if (authLoading) return;
+                if (isAuthenticated) {
+                  await signOut();
+                } else {
+                  await signInWithGoogle();
+                }
+              }}
+              disabled={authLoading}
+            >
+              {authLoading ? 'Please wait…' : isAuthenticated ? 'Sign out' : 'Sign in with Google'}
             </button>
           </div>
         </aside>
@@ -156,10 +221,18 @@ export default function AppShell() {
               <button
                 type="button"
                 className="btn"
-                onClick={toggleAuth}
-                aria-label={isAuthenticated ? 'Simulate logout' : 'Simulate login'}
+                onClick={async () => {
+                  if (authLoading) return;
+                  if (isAuthenticated) {
+                    await signOut();
+                  } else {
+                    await signInWithGoogle();
+                  }
+                }}
+                aria-label={isAuthenticated ? 'Sign out' : 'Sign in with Google'}
+                disabled={authLoading}
               >
-                {isAuthenticated ? 'Logout (mock)' : 'Login (mock)'}
+                {authLoading ? 'Please wait…' : isAuthenticated ? 'Sign out' : 'Sign in'}
               </button>
 
               <button
