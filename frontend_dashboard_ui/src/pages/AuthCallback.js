@@ -1,8 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getSupabase } from '../config/supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 const POST_LOGIN_REDIRECT_KEY = 'spendsense.postLoginRedirect';
+
+function logAuthCallbackError(context, err) {
+  // eslint-disable-next-line no-console
+  console.error(`[SpendSense][AuthCallback] ${context}`, {
+    status: err?.status,
+    code: err?.code,
+    message: err?.message,
+    name: err?.name,
+    raw: err,
+  });
+}
 
 /**
  * OAuth redirect callback landing page.
@@ -12,6 +24,9 @@ const POST_LOGIN_REDIRECT_KEY = 'spendsense.postLoginRedirect';
  * still:
  * - call getSession() once to ensure state is available immediately
  * - redirect the user back to the persisted intended path (if present), else "/dashboard"
+ *
+ * This page additionally provides a friendly error section and retry action when
+ * session finalization fails.
  */
 
 // PUBLIC_INTERFACE
@@ -19,8 +34,10 @@ export default function AuthCallback() {
   /** Minimal callback handler to finalize OAuth login and redirect the user. */
   const supabase = getSupabase();
   const navigate = useNavigate();
+  const { signInWithGoogle, isSupabaseConfigured } = useAuth();
 
   const [message, setMessage] = useState('Finalizing sign-in…');
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,12 +55,10 @@ export default function AuthCallback() {
     async function finalize() {
       if (!supabase) {
         if (cancelled) return;
+        setHasError(true);
         setMessage(
           'Sign-in cannot be completed because Supabase is not configured. Please set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY.'
         );
-        window.setTimeout(() => {
-          if (!cancelled) navigate('/', { replace: true });
-        }, 900);
         return;
       }
 
@@ -54,22 +69,23 @@ export default function AuthCallback() {
         const { data, error } = await supabase.auth.getSession();
         if (cancelled) return;
 
+        if (error) {
+          logAuthCallbackError('getSession() returned an error during OAuth callback finalization', error);
+        }
+
         if (error || !data?.session) {
-          setMessage('Sign-in failed or was cancelled. Redirecting…');
-          window.setTimeout(() => {
-            if (!cancelled) navigate('/', { replace: true });
-          }, 900);
+          setHasError(true);
+          setMessage('Sign-in failed. Please try again or contact support.');
           return;
         }
 
         setMessage('Signed in. Redirecting…');
         navigate(intended || '/dashboard', { replace: true });
-      } catch {
+      } catch (e) {
         if (cancelled) return;
-        setMessage('Sign-in failed. Redirecting…');
-        window.setTimeout(() => {
-          if (!cancelled) navigate('/', { replace: true });
-        }, 900);
+        logAuthCallbackError('getSession() threw during OAuth callback finalization', e);
+        setHasError(true);
+        setMessage('Sign-in failed. Please try again or contact support.');
       }
     }
 
@@ -86,9 +102,39 @@ export default function AuthCallback() {
         <h2 style={{ fontSize: 16, margin: 0 }}>Authentication</h2>
         <span className="badge">OAuth</span>
       </div>
+
       <div className="small-muted" style={{ marginTop: 8 }}>
         {message}
       </div>
+
+      {hasError ? (
+        <div className="auth-callback-actions" style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={async () => {
+              if (!isSupabaseConfigured) {
+                navigate('/', { replace: true });
+                return;
+              }
+              await signInWithGoogle();
+            }}
+            disabled={!isSupabaseConfigured}
+            aria-label="Retry sign-in"
+          >
+            Retry sign-in
+          </button>
+
+          <button
+            type="button"
+            className="btn"
+            onClick={() => navigate('/', { replace: true })}
+            aria-label="Back to home"
+          >
+            Back to home
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

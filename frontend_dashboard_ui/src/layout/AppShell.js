@@ -29,6 +29,8 @@ export default function AppShell() {
     isLoading: authLoading,
     user,
     authError,
+    authBannerError,
+    clearAuthBannerError,
     signInWithGoogle,
     signOut,
   } = useAuth();
@@ -108,6 +110,35 @@ export default function AppShell() {
             {authLoading ? 'Please wait…' : isAuthenticated ? 'Sign out' : 'Sign in with Google'}
           </button>
 
+          {authBannerError ? (
+            <div className="auth-banner" role="alert" aria-live="polite">
+              <div className="auth-banner__row">
+                <strong style={{ fontSize: 12 }}>Sign-in issue</strong>
+                <button
+                  type="button"
+                  className="auth-banner__dismiss"
+                  onClick={clearAuthBannerError}
+                  aria-label="Dismiss sign-in error"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="auth-banner__message">{authBannerError}</div>
+              <div className="auth-banner__actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    if (authLoading) return;
+                    await signInWithGoogle();
+                  }}
+                  disabled={authLoading}
+                >
+                  {authLoading ? 'Please wait…' : 'Retry sign-in'}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {!isSupabaseConfigured ? (
             <div className="small-muted">
               Auth is disabled (missing <span className="mono">REACT_APP_SUPABASE_URL</span> /
@@ -218,22 +249,53 @@ export default function AppShell() {
                 {theme === 'light' ? 'Dark mode' : 'Light mode'}
               </button>
 
-              <button
-                type="button"
-                className="btn"
-                onClick={async () => {
-                  if (authLoading) return;
-                  if (isAuthenticated) {
-                    await signOut();
-                  } else {
-                    await signInWithGoogle();
-                  }
-                }}
-                aria-label={isAuthenticated ? 'Sign out' : 'Sign in with Google'}
-                disabled={authLoading}
-              >
-                {authLoading ? 'Please wait…' : isAuthenticated ? 'Sign out' : 'Sign in'}
-              </button>
+              <div style={{ display: 'grid', gap: 8, justifyItems: 'end' }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={async () => {
+                    if (authLoading) return;
+                    if (isAuthenticated) {
+                      await signOut();
+                    } else {
+                      await signInWithGoogle();
+                    }
+                  }}
+                  aria-label={isAuthenticated ? 'Sign out' : 'Sign in with Google'}
+                  disabled={authLoading}
+                >
+                  {authLoading ? 'Please wait…' : isAuthenticated ? 'Sign out' : 'Sign in'}
+                </button>
+
+                {authBannerError ? (
+                  <div className="auth-banner auth-banner--compact" role="alert" aria-live="polite">
+                    <div className="auth-banner__row">
+                      <div className="auth-banner__message">{authBannerError}</div>
+                      <button
+                        type="button"
+                        className="auth-banner__dismiss"
+                        onClick={clearAuthBannerError}
+                        aria-label="Dismiss sign-in error"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div className="auth-banner__actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={async () => {
+                          if (authLoading) return;
+                          await signInWithGoogle();
+                        }}
+                        disabled={authLoading}
+                      >
+                        {authLoading ? 'Please wait…' : 'Retry'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
 
               <button
                 type="button"

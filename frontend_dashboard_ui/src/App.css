@@ -284,6 +284,75 @@ a { color: inherit; text-decoration: none; }
 
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 
+/* ---- Auth banner (persistent, dismissible) ---- */
+.auth-banner {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.10), rgba(244, 114, 182, 0.08));
+  box-shadow: var(--shadow-sm);
+  padding: 10px 12px;
+}
+
+[data-theme="dark"] .auth-banner {
+  border-color: rgba(239, 68, 68, 0.26);
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.14), rgba(244, 114, 182, 0.10));
+}
+
+.auth-banner--compact {
+  max-width: 360px;
+  justify-self: end;
+  padding: 8px 10px;
+}
+
+.auth-banner__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.auth-banner__message {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.25;
+}
+
+.auth-banner__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.auth-banner--compact .auth-banner__actions {
+  margin-top: 8px;
+}
+
+.auth-banner__dismiss {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.65);
+  color: var(--text);
+  border-radius: 12px;
+  width: 30px;
+  height: 30px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+[data-theme="dark"] .auth-banner__dismiss {
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.auth-banner__dismiss:hover {
+  border-color: rgba(244, 114, 182, 0.26);
+  box-shadow: var(--shadow-inset);
+}
+
 /* Buttons */
 .btn {
   border: 1px solid var(--border);

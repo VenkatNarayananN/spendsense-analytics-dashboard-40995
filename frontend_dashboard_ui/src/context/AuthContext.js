@@ -7,6 +7,7 @@ import { getEnv } from '../config/env';
  *
  * - Uses Supabase Auth session state when configured via env vars.
  * - Falls back gracefully when Supabase is not configured (no-op auth actions + friendly messaging).
+ * - Provides a persistent, dismissible "auth banner" error for failed login/callback flows.
  *
  * This replaces the previous mock-only auth scaffolding.
  */
@@ -20,6 +21,25 @@ function normalizeAuthError(err) {
   return 'Authentication failed.';
 }
 
+/**
+ * Convert a raw Supabase/auth error into a *user-safe* message.
+ * Detailed debugging information is logged separately.
+ */
+function toUserFacingAuthError(_err) {
+  return 'Sign-in failed. Please try again or contact support.';
+}
+
+function logAuthError(context, err) {
+  // eslint-disable-next-line no-console
+  console.error(`[SpendSense][Auth] ${context}`, {
+    status: err?.status,
+    code: err?.code,
+    message: err?.message,
+    name: err?.name,
+    raw: err,
+  });
+}
+
 // PUBLIC_INTERFACE
 export function AuthProvider({ children }) {
   /** Provides real auth state from Supabase (or safe no-op fallback when not configured). */
@@ -28,8 +48,12 @@ export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
 
-  // Track basic status + last error for UI messaging.
+  // "authError" remains for short, inline hints (existing UI).
   const [authError, setAuthError] = useState(null);
+
+  // "authBannerError" is a persistent, dismissible error banner for failed sign-in flows.
+  const [authBannerError, setAuthBannerError] = useState(null);
+
   const [isLoading, setIsLoading] = useState(Boolean(supabase));
 
   const isSupabaseConfigured = Boolean(supabase);
@@ -55,6 +79,7 @@ export function AuthProvider({ children }) {
         if (!isMounted) return;
 
         if (error) {
+          logAuthError('getSession() failed while loading initial session', error);
           setAuthError(normalizeAuthError(error));
           setSession(null);
           setUser(null);
@@ -65,6 +90,7 @@ export function AuthProvider({ children }) {
         }
       } catch (e) {
         if (!isMounted) return;
+        logAuthError('getSession() threw while loading initial session', e);
         setAuthError(normalizeAuthError(e));
         setSession(null);
         setUser(null);
@@ -100,6 +126,12 @@ export function AuthProvider({ children }) {
       getEnv('REACT_APP_FRONTEND_URL', null) ||
       (typeof window !== 'undefined' ? window.location.origin : null);
 
+    // PUBLIC_INTERFACE
+    const clearAuthBannerError = () => {
+      /** Dismiss the persistent auth banner error. */
+      setAuthBannerError(null);
+    };
+
     return {
       // Core state
       isSupabaseConfigured,
@@ -109,20 +141,30 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(user),
       authError,
 
+      // Persistent auth banner error state (dismissible / persists until retry or dismiss)
+      authBannerError,
+
+      clearAuthBannerError,
+
       // PUBLIC_INTERFACE
       async signInWithGoogle() {
         /** Start Google OAuth sign-in using Supabase (no-op if Supabase is not configured). */
         setAuthError(null);
 
         if (!supabase) {
-          setAuthError(
-            'Sign-in is disabled because Supabase is not configured. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY.'
-          );
+          const hint =
+            'Sign-in is disabled because Supabase is not configured. Set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_KEY.';
+          // Keep existing hint behavior + also set banner for visibility near auth controls.
+          setAuthError(hint);
+          setAuthBannerError(hint);
           return { ok: false, error: 'Supabase not configured' };
         }
 
+        // When user retries sign-in, clear previous persistent banner.
+        clearAuthBannerError();
+
         try {
-          const redirectTo = frontendUrl ? `${frontendUrl.replace(/\/+$/, '')}/auth/callback` : undefined;
+          const redirectTo = frontendUrl ? `${frontendUrl.replace(/\/*$/, '')}/auth/callback` : undefined;
 
           const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
@@ -130,17 +172,21 @@ export function AuthProvider({ children }) {
           });
 
           if (error) {
-            const msg = normalizeAuthError(error);
-            setAuthError(msg);
-            return { ok: false, error: msg };
+            logAuthError('signInWithOAuth(google) returned an error', error);
+            const userMsg = toUserFacingAuthError(error);
+            setAuthBannerError(userMsg);
+            setAuthError(userMsg);
+            return { ok: false, error: userMsg };
           }
 
           // Note: On success, the browser is typically redirected to the provider.
           return { ok: true };
         } catch (e) {
-          const msg = normalizeAuthError(e);
-          setAuthError(msg);
-          return { ok: false, error: msg };
+          logAuthError('signInWithOAuth(google) threw', e);
+          const userMsg = toUserFacingAuthError(e);
+          setAuthBannerError(userMsg);
+          setAuthError(userMsg);
+          return { ok: false, error: userMsg };
         }
       },
 
@@ -158,6 +204,7 @@ export function AuthProvider({ children }) {
         try {
           const { error } = await supabase.auth.signOut();
           if (error) {
+            logAuthError('signOut() returned an error', error);
             const msg = normalizeAuthError(error);
             setAuthError(msg);
             return { ok: false, error: msg };
@@ -167,13 +214,14 @@ export function AuthProvider({ children }) {
           setUser(null);
           return { ok: true };
         } catch (e) {
+          logAuthError('signOut() threw', e);
           const msg = normalizeAuthError(e);
           setAuthError(msg);
           return { ok: false, error: msg };
         }
       },
     };
-  }, [authError, isLoading, isSupabaseConfigured, session, supabase, user]);
+  }, [authBannerError, authError, isLoading, isSupabaseConfigured, session, supabase, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
