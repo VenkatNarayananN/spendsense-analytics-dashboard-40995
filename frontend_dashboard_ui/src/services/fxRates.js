@@ -50,7 +50,10 @@ let cached = {
 // PUBLIC_INTERFACE
 export async function fetchLatestFxRates({ base = 'USD', force = false } = {}) {
   /**
-   * Fetch latest FX rates from backend.
+   * Fetch latest FX rates from *our backend* (never call Open Exchange Rates directly from the browser).
+   *
+   * Rationale: the Open Exchange Rates API key must remain server-side only and must never be shipped
+   * to the frontend bundle or exposed via client network calls.
    *
    * - Uses REACT_APP_BACKEND_URL / REACT_APP_API_BASE (via getBackendUrl()).
    * - Caches results in-memory for the browser session.
