@@ -14,12 +14,11 @@ test('renders SpendSense shell', () => {
   expect(screen.getAllByText(/SpendSense/i).length).toBeGreaterThan(0);
 });
 
-test('renders Transactions filters', () => {
+test('renders Dashboard currency selector', () => {
   render(<App />);
-  // Transactions page is reachable from shell; in CRA tests we start at "/".
-  // We only assert filter labels exist in DOM somewhere after initial render of the app shell.
-  // (The pages themselves are mounted by routes; this is a lightweight existence test.)
-  expect(screen.getByText(/Dashboard/i)).toBeInTheDocument();
+  // Default route is "/", which mounts the Dashboard.
+  // Ensure the new selector is present for subsequent features that rely on currency state.
+  expect(screen.getByLabelText(/Select currency for dashboard/i)).toBeInTheDocument();
 });
 
 test('empty/loading state components are available', () => {

@@ -27,7 +27,7 @@ function rangeLabel(range) {
 // PUBLIC_INTERFACE
 export default function Dashboard() {
   /** Dashboard overview page with KPI cards and recent activity placeholder data. */
-  const { searchQuery } = useUI();
+  const { searchQuery, currency: selectedCurrency, setCurrency, supportedCurrencies } = useUI();
   const { addAlert } = useAlerts();
 
   const [timeRange, setTimeRange] = useState('30d');
@@ -95,18 +95,35 @@ export default function Dashboard() {
         title="Overview"
         subtitle={`KPIs and trends · ${rangeLabel(timeRange)} (placeholder)`}
         actions={(
-          <div className="chip-group" role="group" aria-label="Dashboard time range">
-            {['7d', '30d', '90d'].map((r) => (
-              <button
-                key={r}
-                type="button"
-                className="chip"
-                aria-pressed={timeRange === r ? 'true' : 'false'}
-                onClick={() => setTimeRange(r)}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <div className="chip-group" role="group" aria-label="Dashboard time range">
+              {['7d', '30d', '90d'].map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className="chip"
+                  aria-pressed={timeRange === r ? 'true' : 'false'}
+                  onClick={() => setTimeRange(r)}
+                >
+                  {r.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            <div className="filter-group" style={{ minWidth: 180 }}>
+              <label className="filter-label" htmlFor="dash-currency">Currency</label>
+              <select
+                id="dash-currency"
+                className="select"
+                value={selectedCurrency}
+                onChange={(e) => setCurrency(e.target.value)}
+                aria-label="Select currency for dashboard (no conversion yet)"
               >
-                {r.toUpperCase()}
-              </button>
-            ))}
+                {(supportedCurrencies || ['USD', 'INR', 'GBP', 'EUR']).map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
           </div>
         )}
       >
