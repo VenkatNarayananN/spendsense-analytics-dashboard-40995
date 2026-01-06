@@ -2,6 +2,8 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
+const POST_LOGIN_REDIRECT_KEY = 'spendsense.postLoginRedirect';
+
 // PUBLIC_INTERFACE
 export default function ProtectedRoute({ children }) {
   /**
@@ -10,7 +12,9 @@ export default function ProtectedRoute({ children }) {
    * Behavior:
    * - While auth is loading, show a minimal loading panel.
    * - If Supabase isn't configured, redirect to "/" and include a friendly message.
-   * - If not authenticated, redirect to "/" and preserve "from" in location state.
+   * - If not authenticated:
+   *    - persist the intended URL (pathname + search + hash) for post-login redirect
+   *    - redirect to "/" (do NOT trigger OAuth automatically)
    */
   const { isAuthenticated, isLoading, isSupabaseConfigured } = useAuth();
   const location = useLocation();
@@ -41,7 +45,25 @@ export default function ProtectedRoute({ children }) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/" replace state={{ from: location }} />;
+    // Persist the full intended path so /auth/callback can restore it after OAuth.
+    // We use sessionStorage so it survives the OAuth full-page redirect but clears on tab close.
+    try {
+      const intended = `${location.pathname || '/'}${location.search || ''}${location.hash || ''}`;
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, intended);
+    } catch {
+      // Ignore storage errors (private mode/quota); we'll fall back to dashboard.
+    }
+
+    return (
+      <Navigate
+        to="/"
+        replace
+        state={{
+          from: location,
+          authMessage: 'Please sign in to continue.',
+        }}
+      />
+    );
   }
 
   return children;
