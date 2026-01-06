@@ -21,6 +21,19 @@ function rangeLabel(range) {
   return 'All time';
 }
 
+function hasRateForCurrency(rates, currencyCode) {
+  if (!rates) return false;
+  const c = String(currencyCode || '').toUpperCase();
+  if (!c || c === 'USD') return true; // USD doesn't require a rate for this dashboard
+  const r = Number(rates[c]);
+  return Number.isFinite(r) && r > 0;
+}
+
+function moneySkeleton() {
+  // A visually-stable placeholder that doesn't jump around in KPI cards / subtitles.
+  return '—';
+}
+
 // PUBLIC_INTERFACE
 export default function Dashboard() {
   /** Dashboard overview page with KPI cards and recent activity placeholder data. */
@@ -43,6 +56,49 @@ export default function Dashboard() {
     isLoading: false,
     error: null,
   });
+
+  const canConvert = useMemo(() => hasRateForCurrency(fx?.rates, selectedCurrency), [fx?.rates, selectedCurrency]);
+
+  // Provide UI signals without blocking the rest of the dashboard.
+  const fxUi = useMemo(() => {
+    const loading = Boolean(fx?.isLoading);
+    const hasError = Boolean(fx?.error);
+
+    // If we're loading and don't have previous rates yet, treat as "initial load".
+    const initialLoading = loading && !fx?.rates;
+
+    // When we have cached/previous rates, we can keep showing values while refreshing in background.
+    const refreshing = loading && Boolean(fx?.rates);
+
+    // Only show "no conversion possible" placeholders when we truly cannot convert and user asked for non-USD.
+    const showPlaceholders = !canConvert && selectedCurrency !== 'USD';
+
+    return { loading, initialLoading, refreshing, hasError, showPlaceholders };
+  }, [fx?.isLoading, fx?.error, fx?.rates, canConvert, selectedCurrency]);
+
+  // PUBLIC_INTERFACE
+  async function retryFxFetch() {
+    /** Manually re-fetch FX rates (force refresh) without blocking other dashboard interactions. */
+    setFx((prev) => ({ ...prev, isLoading: true, error: null }));
+    const res = await fetchLatestFxRates({ base: 'USD', force: true });
+
+    if (res.ok) {
+      setFx({
+        base: res.data.base,
+        rates: res.data.rates,
+        timestamp: res.data.timestamp || null,
+        isLoading: false,
+        error: null,
+      });
+    } else {
+      // Keep last-known rates if they exist; we only update the error and loading flags.
+      setFx((prev) => ({
+        ...prev,
+        isLoading: false,
+        error: res.error || 'Failed to fetch FX rates.',
+      }));
+    }
+  }
 
   useEffect(() => {
     // Simulate initial fetch for KPI/overview data.
@@ -121,6 +177,16 @@ export default function Dashboard() {
     const monthlySpendUsd = 2480.12 * factor;
     const netCashflowUsd = 310.55 * (factor * 0.9);
 
+    // If conversion isn't possible (missing rates) and user selected non-USD, return placeholders.
+    if (fxUi.showPlaceholders) {
+      return [
+        { label: 'Monthly spend', value: moneySkeleton(), sub: `${percent(0.06)} vs last month` },
+        { label: 'Net cashflow', value: moneySkeleton(), sub: 'Income − Expenses' },
+        { label: 'Savings rate', value: `${Math.round(18 / factor)}%`, sub: 'Target: 20%' },
+        { label: 'At-risk categories', value: timeRange === '7d' ? '1' : '2', sub: 'Dining, Subscriptions' },
+      ];
+    }
+
     const monthlySpend = convertAmount({
       amount: monthlySpendUsd,
       from: 'USD',
@@ -141,7 +207,7 @@ export default function Dashboard() {
       { label: 'Savings rate', value: `${Math.round(18 / factor)}%`, sub: 'Target: 20%' },
       { label: 'At-risk categories', value: timeRange === '7d' ? '1' : '2', sub: 'Dining, Subscriptions' },
     ];
-  }, [timeRange, selectedCurrency, fx?.rates]);
+  }, [timeRange, selectedCurrency, fx?.rates, fxUi.showPlaceholders]);
 
   const recent = useMemo(() => ([
     { id: 't1', merchant: 'Aurora Coffee', category: 'Dining', amountUsd: -6.45, date: 'Today' },
@@ -171,6 +237,14 @@ export default function Dashboard() {
     const avgUsd = totalUsd / baseSeriesUsd.length;
     const maxUsd = Math.max(...baseSeriesUsd);
 
+    if (fxUi.showPlaceholders) {
+      return {
+        totalLabel: moneySkeleton(),
+        avgLabel: moneySkeleton(),
+        maxLabel: moneySkeleton(),
+      };
+    }
+
     const total = convertAmount({ amount: totalUsd, from: 'USD', to: selectedCurrency, ratesByCode: fx?.rates });
     const avg = convertAmount({ amount: avgUsd, from: 'USD', to: selectedCurrency, ratesByCode: fx?.rates });
     const max = convertAmount({ amount: maxUsd, from: 'USD', to: selectedCurrency, ratesByCode: fx?.rates });
@@ -180,7 +254,7 @@ export default function Dashboard() {
       avgLabel: formatMoney(avg, selectedCurrency),
       maxLabel: formatMoney(max, selectedCurrency),
     };
-  }, [timeRange, selectedCurrency, fx?.rates]);
+  }, [timeRange, selectedCurrency, fx?.rates, fxUi.showPlaceholders]);
 
   return (
     <div>
@@ -210,7 +284,7 @@ export default function Dashboard() {
                 className="select"
                 value={selectedCurrency}
                 onChange={(e) => setCurrency(e.target.value)}
-                aria-label="Select currency for dashboard (no conversion yet)"
+                aria-label="Select currency for dashboard"
               >
                 {(supportedCurrencies || ['USD', 'INR', 'GBP', 'EUR']).map((c) => (
                   <option key={c} value={c}>{c}</option>
@@ -220,37 +294,40 @@ export default function Dashboard() {
           </div>
         )}
       >
-        {/* FX fetch failure banner (non-blocking, allows retry). */}
-        {fx.error ? (
+        {/* FX loading / error (non-blocking): do not prevent interacting with the rest of the dashboard. */}
+        {fxUi.initialLoading ? (
+          <div style={{ marginBottom: 12 }}>
+            <LoadingState message="Fetching FX rates for currency conversions…" minHeight={120} />
+          </div>
+        ) : fx.error ? (
           <div className="card" style={{ marginBottom: 12, padding: 12 }}>
             <div className="card-title-row">
-              <strong style={{ fontSize: 13 }}>FX rates unavailable</strong>
+              <strong style={{ fontSize: 13 }}>Currency conversion temporarily unavailable</strong>
               <button
                 type="button"
                 className="btn"
-                onClick={async () => {
-                  setFx((prev) => ({ ...prev, isLoading: true, error: null }));
-                  const res = await fetchLatestFxRates({ base: 'USD', force: true });
-                  if (res.ok) {
-                    setFx({
-                      base: res.data.base,
-                      rates: res.data.rates,
-                      timestamp: res.data.timestamp || null,
-                      isLoading: false,
-                      error: null,
-                    });
-                  } else {
-                    setFx((prev) => ({ ...prev, isLoading: false, error: res.error || 'Failed to fetch FX rates.' }));
-                  }
-                }}
+                onClick={retryFxFetch}
                 aria-label="Retry fetching FX rates"
+                disabled={fxUi.loading}
               >
-                {fx.isLoading ? 'Retrying…' : 'Retry'}
+                {fxUi.loading ? 'Retrying…' : 'Retry'}
               </button>
             </div>
+
             <div className="small-muted" style={{ marginTop: 6 }}>
-              {fx.error} Conversions may be stale or remain in USD until rates are available.
+              We couldn’t refresh FX rates right now. {fx.rates ? 'Showing the last known conversion rates.' : 'Values may remain in USD or show placeholders until rates are available.'}
             </div>
+
+            <div className="small-muted" style={{ marginTop: 6 }}>
+              <span className="mono">Details:</span> {fx.error}
+            </div>
+          </div>
+        ) : null}
+
+        {/* Subtle “refreshing” hint when we already have rates but are revalidating them. */}
+        {fxUi.refreshing ? (
+          <div className="small-muted" style={{ marginBottom: 10 }}>
+            Refreshing FX rates…
           </div>
         ) : null}
 
@@ -260,10 +337,17 @@ export default function Dashboard() {
           </div>
         ) : null}
 
+        {/* If user selected a non-USD currency but we don't have a usable rate, show an inline hint (doesn't block). */}
+        {fxUi.showPlaceholders ? (
+          <div className="small-muted" style={{ marginBottom: 10 }}>
+            Conversions to <span className="mono">{selectedCurrency}</span> are not available yet — showing placeholders.
+          </div>
+        ) : null}
+
         {isLoading ? (
           <LoadingState message="Refreshing dashboard KPIs…" />
         ) : (
-          <div className="grid">
+          <div className="grid" style={fxUi.loading ? { opacity: 0.9 } : undefined} aria-busy={fxUi.loading ? 'true' : 'false'}>
             {kpis.map((k) => (
               <div key={k.label} className="card" style={{ gridColumn: 'span 3' }}>
                 <div className="kpi">
@@ -277,11 +361,15 @@ export default function Dashboard() {
         )}
       </PageSection>
 
-      <div className="grid" style={{ marginTop: 14 }}>
+      <div className="grid" style={{ marginTop: 14, opacity: fxUi.loading ? 0.9 : 1 }}>
         <div style={{ gridColumn: 'span 7' }}>
           <LineChartPlaceholder
             title={`Spending trend · ${rangeLabel(timeRange)}`}
-            subtitle={`Total: ${chartPlaceholderNumbers.totalLabel} · Avg: ${chartPlaceholderNumbers.avgLabel} · Max: ${chartPlaceholderNumbers.maxLabel}`}
+            subtitle={
+              fxUi.loading
+                ? 'Updating conversion…'
+                : `Total: ${chartPlaceholderNumbers.totalLabel} · Avg: ${chartPlaceholderNumbers.avgLabel} · Max: ${chartPlaceholderNumbers.maxLabel}`
+            }
           />
           <div className="card" style={{ marginTop: 12 }}>
             <div className="small-muted">
@@ -334,6 +422,20 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {filteredRecent.map((r) => {
+                // If conversion isn't possible for the selected currency, show a stable placeholder.
+                if (fxUi.showPlaceholders) {
+                  return (
+                    <tr key={r.id}>
+                      <td>{r.merchant}</td>
+                      <td>{r.category}</td>
+                      <td>{r.date}</td>
+                      <td style={{ textAlign: 'right' }} className="mono">
+                        {moneySkeleton()}
+                      </td>
+                    </tr>
+                  );
+                }
+
                 const converted = convertAmount({
                   amount: r.amountUsd,
                   from: 'USD',
