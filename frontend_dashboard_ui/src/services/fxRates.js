@@ -1,4 +1,5 @@
 import { getBackendUrl } from '../config/env';
+import { apiGetJson } from './apiClient';
 
 const FX_CACHE_TTL_MS = 55 * 60 * 1000; // keep slightly under backend's 1h cache
 
@@ -56,6 +57,7 @@ export async function fetchLatestFxRates({ base = 'USD', force = false } = {}) {
    * to the frontend bundle or exposed via client network calls.
    *
    * - Uses REACT_APP_BACKEND_URL / REACT_APP_API_BASE (via getBackendUrl()).
+   * - Uses api client to attach Supabase Authorization header to /api/*.
    * - Caches results in-memory for the browser session.
    *
    * @param {{base?: string, force?: boolean}} options
@@ -72,27 +74,21 @@ export async function fetchLatestFxRates({ base = 'USD', force = false } = {}) {
     return { ok: false, error: 'Backend URL is not configured (missing REACT_APP_BACKEND_URL).' };
   }
 
-  const url = `${backendUrl.replace(/\/+$/, '')}/api/fx/latest?base=${encodeURIComponent(baseUpper)}`;
+  // Use a relative /api/* path so apiClient can consistently detect and attach auth headers.
+  const path = `/api/fx/latest?base=${encodeURIComponent(baseUpper)}`;
 
   try {
-    const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
-    const text = await res.text();
-
-    let payload = null;
-    try {
-      payload = text ? JSON.parse(text) : null;
-    } catch {
-      // ignore JSON parsing error for now
-    }
+    const res = await apiGetJson(path, {
+      // This endpoint is protected; if auth is missing/expired we prefer redirect UX.
+      redirectOn401: true,
+      retryOn401: true,
+    });
 
     if (!res.ok) {
-      const msg =
-        (payload && (payload.message || payload.error)) ||
-        `FX endpoint failed with HTTP ${res.status}`;
-      return { ok: false, error: String(msg) };
+      return { ok: false, error: res.error || 'Unable to fetch exchange rates right now. Please try again later.' };
     }
 
-    const normalized = normalizeFxResponse(payload);
+    const normalized = normalizeFxResponse(res.data);
     if (!normalized) {
       return { ok: false, error: 'FX endpoint returned an unexpected response shape.' };
     }
