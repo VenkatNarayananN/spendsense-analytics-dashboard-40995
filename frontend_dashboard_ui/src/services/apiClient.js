@@ -1,4 +1,4 @@
-import { getBackendUrl } from '../config/env';
+import { getApiBaseUrl } from '../config/env';
 import { getSupabase } from '../config/supabaseClient';
 
 const POST_LOGIN_REDIRECT_KEY = 'spendsense.postLoginRedirect';
@@ -92,7 +92,7 @@ export async function apiFetch(path, options = {}) {
     ...fetchOptions
   } = options;
 
-  const backendUrl = getBackendUrl();
+  const backendUrl = getApiBaseUrl();
 
   const isFullUrl = /^https?:\/\//i.test(path);
   const url = isFullUrl

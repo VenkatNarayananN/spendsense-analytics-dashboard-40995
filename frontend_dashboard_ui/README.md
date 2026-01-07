@@ -11,6 +11,22 @@ This project provides a minimal React template with a clean, modern UI and minim
 
 ## Getting Started
 
+### Backend API base URL (REACT_APP_API_BASE)
+
+All frontend API calls (via `src/services/apiClient.js`, `src/services/backendApi.js`, and `src/api/*`) use a single base URL resolved from:
+
+1. `REACT_APP_API_BASE` (preferred)
+2. `REACT_APP_BACKEND_URL` (legacy/back-compat)
+3. If neither is set: `window.location.origin` (same-origin default)
+
+Notes:
+- Set `REACT_APP_API_BASE` to the **origin** of your backend (do not include `/api`), e.g.:
+  - `REACT_APP_API_BASE=https://your-backend.example.com`
+- The frontend will call paths like `/api/transactions`, which become:
+  - `${REACT_APP_API_BASE}/api/transactions`
+- Avoid hardcoding `http://localhost:3001` (or any fixed host) in frontend code; use env vars instead.
+- Do not put server-only secrets in `REACT_APP_*` variables. Anything prefixed with `REACT_APP_` is bundled into the client.
+
 In the project directory, you can run:
 
 ### `npm start`
