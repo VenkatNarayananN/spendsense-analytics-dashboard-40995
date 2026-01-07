@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PageSection from '../components/PageSection';
 import { useAlerts } from '../context/AlertsContext';
 import LoadingState from '../components/LoadingState';
 import EmptyState from '../components/EmptyState';
+import InlineErrorBanner from '../components/InlineErrorBanner';
 import { dismissAlert as dismissBackendAlert, listAlerts } from '../services/backendApi';
 
 function uiTypeFromBackendType(type) {
@@ -48,21 +49,39 @@ export default function Alerts() {
   const [statusFilter, setStatusFilter] = useState('All');
 
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
   const [alerts, setAlerts] = useState([]);
   const [refreshTick, setRefreshTick] = useState(0);
 
-  async function refetch() {
-    setIsLoading(true);
-    setError(null);
+  // Per-action state for dismiss
+  const [dismissingIds, setDismissingIds] = useState(() => new Set());
+
+  // Helps avoid UI flicker: if a refetch is already in-flight, ignore stale completions.
+  const fetchSeq = useRef(0);
+
+  async function refetch({ isManualRetry = false } = {}) {
+    const hasPreviousData = Array.isArray(alerts) && alerts.length > 0;
+
+    if (hasPreviousData) setIsRefreshing(true);
+    else setIsLoading(true);
+
+    if (isManualRetry || !hasPreviousData) setError(null);
 
     const backendStatus = statusFilter === 'All' ? undefined : statusFilter.toLowerCase();
+
+    const seq = fetchSeq.current + 1;
+    fetchSeq.current = seq;
+
     const res = await listAlerts({ status: backendStatus });
+
+    if (fetchSeq.current !== seq) return;
 
     if (!res.ok) {
       setError(toUserFacingError(res));
       setIsLoading(false);
+      setIsRefreshing(false);
       return;
     }
 
@@ -77,7 +96,9 @@ export default function Alerts() {
     }));
 
     setAlerts(normalized);
+    setError(null);
     setIsLoading(false);
+    setIsRefreshing(false);
   }
 
   useEffect(() => {
@@ -93,6 +114,9 @@ export default function Alerts() {
   }, [alerts, statusFilter]);
 
   async function onDismiss(a) {
+    // Prevent double-click spamming.
+    setDismissingIds((prev) => new Set(prev).add(a.id));
+
     // Optimistic UI update
     setAlerts((prev) => prev.filter((x) => x.id !== a.id));
 
@@ -104,7 +128,13 @@ export default function Alerts() {
 
     if (!res.ok) {
       // rollback best-effort
-      setAlerts((prev) => [a, ...prev]);
+      setAlerts((prev) => [a, ...(prev || [])]);
+      setDismissingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(a.id);
+        return next;
+      });
+
       addAlert({
         type: 'error',
         title: 'Could not dismiss alert',
@@ -119,9 +149,18 @@ export default function Alerts() {
       message: 'The alert has been dismissed.',
     });
 
+    setDismissingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(a.id);
+      return next;
+    });
+
     // Refetch to stay consistent with backend truth
     setRefreshTick((t) => t + 1);
   }
+
+  const showInitialBlockingLoad = isLoading && alerts.length === 0;
+  const showBlockingError = Boolean(error) && alerts.length === 0;
 
   return (
     <div>
@@ -172,15 +211,29 @@ export default function Alerts() {
               Filter: <span className="mono">{statusFilter}</span>
             </div>
 
+            {/* Non-blocking error banner if we have last-known data */}
+            {error && alerts.length > 0 ? (
+              <div style={{ marginTop: 10 }}>
+                <InlineErrorBanner
+                  title="Could not refresh alerts"
+                  description={error}
+                  actionLabel="Retry"
+                  onAction={() => refetch({ isManualRetry: true })}
+                  isBusy={isRefreshing}
+                  tone="warning"
+                />
+              </div>
+            ) : null}
+
             <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
-              {isLoading ? (
+              {showInitialBlockingLoad ? (
                 <LoadingState message="Loading alerts…" minHeight={160} />
-              ) : error ? (
+              ) : showBlockingError ? (
                 <EmptyState
                   title="Could not load alerts"
                   description={error}
                   actionLabel="Retry"
-                  onAction={() => setRefreshTick((t) => t + 1)}
+                  onAction={() => refetch({ isManualRetry: true })}
                 />
               ) : filteredAlerts.length === 0 ? (
                 <EmptyState
@@ -194,35 +247,44 @@ export default function Alerts() {
                   onAction={statusFilter !== 'All' ? () => setStatusFilter('All') : undefined}
                 />
               ) : (
-                filteredAlerts.map((a) => (
-                  <div key={a.id} className="alert-item" aria-label={`Alert: ${a.title} (${statusLabel(a.status)})`}>
-                    <div>
-                      <p className="alert-title">{a.title}</p>
-                      <p className="alert-body">{a.message}</p>
-                      <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <span className={a.type === 'success' ? 'pill pill-success' : a.type === 'error' ? 'pill pill-error' : 'pill pill-warn'}>
-                          <span className="pill-dot" aria-hidden="true" />
-                          {a.type}
-                        </span>
-                        <span className="pill">
-                          <span className="pill-dot" aria-hidden="true" />
-                          {String(a.status || 'active')}
-                        </span>
+                <div style={isRefreshing ? { opacity: 0.72 } : undefined} aria-busy={isRefreshing ? 'true' : 'false'}>
+                  {filteredAlerts.map((a) => (
+                    <div key={a.id} className="alert-item" aria-label={`Alert: ${a.title} (${statusLabel(a.status)})`}>
+                      <div>
+                        <p className="alert-title">{a.title}</p>
+                        <p className="alert-body">{a.message}</p>
+                        <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span className={a.type === 'success' ? 'pill pill-success' : a.type === 'error' ? 'pill pill-error' : 'pill pill-warn'}>
+                            <span className="pill-dot" aria-hidden="true" />
+                            {a.type}
+                          </span>
+                          <span className="pill">
+                            <span className="pill-dot" aria-hidden="true" />
+                            {String(a.status || 'active')}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="alert-meta">
+                        <span className="alert-time">{a.relativeTime}</span>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => onDismiss(a)}
+                          aria-label={`Dismiss alert: ${a.title}`}
+                          disabled={dismissingIds.has(a.id)}
+                        >
+                          {dismissingIds.has(a.id) ? 'Dismissing…' : 'Dismiss'}
+                        </button>
                       </div>
                     </div>
-                    <div className="alert-meta">
-                      <span className="alert-time">{a.relativeTime}</span>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        onClick={() => onDismiss(a)}
-                        aria-label={`Dismiss alert: ${a.title}`}
-                      >
-                        Dismiss
-                      </button>
+                  ))}
+
+                  {isRefreshing ? (
+                    <div className="small-muted" style={{ marginTop: 10 }}>
+                      Refreshing alerts…
                     </div>
-                  </div>
-                ))
+                  ) : null}
+                </div>
               )}
             </div>
           </div>

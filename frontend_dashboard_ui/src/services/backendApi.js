@@ -121,3 +121,14 @@ export async function dismissAlert({ id, type, message }) {
   if (!res.ok) return res;
   return { ok: true, data: res.data?.data || null };
 }
+
+// PUBLIC_INTERFACE
+export async function getCurrentUserProfile() {
+  /** Fetch the authenticated user's profile from GET /api/users/me. */
+  const res = await apiGetJson('/api/users/me', { redirectOn401: true, retryOn401: true });
+  if (!res.ok) return res;
+
+  // Expected: { success: true, data: { user } }
+  const user = res.data?.data?.user || null;
+  return { ok: true, data: { user } };
+}

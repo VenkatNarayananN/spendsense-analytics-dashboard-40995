@@ -7,6 +7,7 @@ import PieChartPlaceholder from '../components/charts/PieChartPlaceholder';
 import { subscribeToNewTransactions } from '../services/transactionsRealtime';
 import LoadingState from '../components/LoadingState';
 import EmptyState from '../components/EmptyState';
+import InlineErrorBanner from '../components/InlineErrorBanner';
 import { convertAmount, fetchLatestFxRates, formatMoney } from '../services/fxRates';
 import { getAnalyticsSummary } from '../services/backendApi';
 
@@ -51,6 +52,13 @@ function computeRangeParams(timeRange) {
   return { from: isoDateOnly(from), to: isoDateOnly(to) };
 }
 
+function toUserFacingError(e) {
+  if (!e) return 'Something went wrong.';
+  if (typeof e === 'string') return e;
+  if (typeof e?.error === 'string') return e.error;
+  return 'Something went wrong.';
+}
+
 // PUBLIC_INTERFACE
 export default function Dashboard() {
   /** Dashboard overview page with KPI cards, backed by analytics summary endpoint. */
@@ -62,6 +70,7 @@ export default function Dashboard() {
   // Analytics state
   const [summary, setSummary] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
 
   // Used to trigger re-fetches later when dashboard data refreshes.
@@ -119,21 +128,36 @@ export default function Dashboard() {
     }
   }
 
-  async function loadAnalytics() {
-    setIsLoading(true);
-    setLoadError(null);
+  async function loadAnalytics({ isManualRetry = false } = {}) {
+    const hasPreviousData = Boolean(summary);
+
+    // Preserve last-known data when possible:
+    // - initial load: show full LoadingState
+    // - refetch: keep existing UI, but dim + show a subtle banner
+    if (hasPreviousData) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+
+    // Clear hard error only on manual retry or initial load;
+    // otherwise keep the error banner (if any) until the next successful fetch.
+    if (isManualRetry || !hasPreviousData) setLoadError(null);
 
     const range = computeRangeParams(timeRange);
     const res = await getAnalyticsSummary(range);
 
     if (!res.ok) {
-      setLoadError(res.error || 'Failed to load analytics summary.');
+      setLoadError(toUserFacingError(res) || 'Failed to load analytics summary.');
       setIsLoading(false);
+      setIsRefreshing(false);
       return;
     }
 
     setSummary(res.data.summary || null);
+    setLoadError(null);
     setIsLoading(false);
+    setIsRefreshing(false);
   }
 
   useEffect(() => {
@@ -234,9 +258,8 @@ export default function Dashboard() {
       ? convertAmount({ amount: topCategoryTotalUsd, from: 'USD', to: selectedCurrency, ratesByCode: fx?.rates })
       : null;
 
-    const rangeText = summary?.range?.from && summary?.range?.to
-      ? `${summary.range.from} → ${summary.range.to}`
-      : rangeLabel(timeRange);
+    const rangeText =
+      summary?.range?.from && summary?.range?.to ? `${summary.range.from} → ${summary.range.to}` : rangeLabel(timeRange);
 
     return [
       {
@@ -289,6 +312,9 @@ export default function Dashboard() {
       maxLabel: formatMoney(max, selectedCurrency),
     };
   }, [timeRange, selectedCurrency, fx?.rates, fxUi.showPlaceholders, summary]);
+
+  const showInitialBlockingLoad = isLoading && !summary;
+  const showBlockingError = Boolean(loadError) && !summary;
 
   return (
     <div>
@@ -378,17 +404,35 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        {isLoading ? (
-          <LoadingState message="Refreshing dashboard KPIs…" />
-        ) : loadError ? (
+        {/* Page-level error banner: only show non-blocking if we have last-known data; otherwise show full EmptyState */}
+        {loadError && summary ? (
+          <div style={{ marginBottom: 12 }}>
+            <InlineErrorBanner
+              title="Dashboard may be out of date"
+              description={loadError}
+              actionLabel="Retry"
+              onAction={() => loadAnalytics({ isManualRetry: true })}
+              isBusy={isRefreshing}
+              tone="warning"
+            />
+          </div>
+        ) : null}
+
+        {showInitialBlockingLoad ? (
+          <LoadingState message="Loading dashboard KPIs…" />
+        ) : showBlockingError ? (
           <EmptyState
             title="Could not load dashboard"
             description={loadError}
             actionLabel="Retry"
-            onAction={() => setRefreshTick((t) => t + 1)}
+            onAction={() => loadAnalytics({ isManualRetry: true })}
           />
         ) : (
-          <div className="grid" style={fxUi.loading ? { opacity: 0.9 } : undefined} aria-busy={fxUi.loading ? 'true' : 'false'}>
+          <div
+            className="grid"
+            style={(fxUi.loading || isRefreshing) ? { opacity: 0.72, filter: 'saturate(0.95)' } : undefined}
+            aria-busy={(fxUi.loading || isRefreshing) ? 'true' : 'false'}
+          >
             {kpis.map((k) => (
               <div key={k.label} className="card" style={{ gridColumn: 'span 3' }}>
                 <div className="kpi">
@@ -400,15 +444,22 @@ export default function Dashboard() {
             ))}
           </div>
         )}
+
+        {/* Small hint while we refetch but keep UI */}
+        {isRefreshing && summary ? (
+          <div className="small-muted" style={{ marginTop: 10 }}>
+            Refreshing dashboard…
+          </div>
+        ) : null}
       </PageSection>
 
-      <div className="grid" style={{ marginTop: 14, opacity: fxUi.loading ? 0.9 : 1 }}>
+      <div className="grid" style={{ marginTop: 14, opacity: (fxUi.loading || isRefreshing) ? 0.9 : 1 }}>
         <div style={{ gridColumn: 'span 7' }}>
           <LineChartPlaceholder
             title={`Spending trend · ${rangeLabel(timeRange)}`}
             subtitle={
-              fxUi.loading
-                ? 'Updating conversion…'
+              (fxUi.loading || isRefreshing)
+                ? 'Updating…'
                 : `Total: ${chartPlaceholderNumbers.totalLabel} · Avg: ${chartPlaceholderNumbers.avgLabel} · Max: ${chartPlaceholderNumbers.maxLabel}`
             }
           />

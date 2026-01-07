@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PageSection from '../components/PageSection';
 import { useUI } from '../context/UIContext';
 import { useAlerts } from '../context/AlertsContext';
 import { subscribeToNewTransactions } from '../services/transactionsRealtime';
 import LoadingState from '../components/LoadingState';
 import EmptyState from '../components/EmptyState';
+import InlineErrorBanner from '../components/InlineErrorBanner';
 import { createTransaction, listTransactions } from '../services/backendApi';
 
 function currency(n, currencyCode = 'USD') {
@@ -37,6 +38,10 @@ function toUserFacingError(e) {
   return 'Something went wrong.';
 }
 
+function makeTempId() {
+  return `tmp_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 // PUBLIC_INTERFACE
 export default function Transactions() {
   /** Transactions list page backed by authenticated backend API. */
@@ -58,10 +63,12 @@ export default function Transactions() {
   const [page, setPage] = useState(null);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
 
   // Create flow
   const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState(null);
   const [createFormOpen, setCreateFormOpen] = useState(false);
   const [newMerchant, setNewMerchant] = useState('');
   const [newCategory, setNewCategory] = useState('');
@@ -72,13 +79,16 @@ export default function Transactions() {
 
   const [refreshTick, setRefreshTick] = useState(0);
 
+  // Helps avoid UI flicker: if a refetch is already in-flight, ignore stale completions.
+  const fetchSeq = useRef(0);
+
   const hasAnyLocalFilter = Boolean(
-    localSearch.trim() ||
-      category !== 'all' ||
-      dateFrom ||
-      dateTo ||
-      minAmount ||
-      maxAmount
+    localSearch.trim()
+      || category !== 'all'
+      || dateFrom
+      || dateTo
+      || minAmount
+      || maxAmount
   );
 
   const categories = useMemo(() => {
@@ -86,11 +96,21 @@ export default function Transactions() {
     return ['all', ...Array.from(set)];
   }, [items]);
 
-  async function refetch() {
-    setIsLoading(true);
-    setError(null);
+  async function refetch({ isManualRetry = false } = {}) {
+    const hasPreviousData = Array.isArray(items) && items.length > 0;
+
+    // Preserve last-known data when possible:
+    // - initial load: LoadingState
+    // - refetch: dim table + show small refreshing indicator / banner
+    if (hasPreviousData) setIsRefreshing(true);
+    else setIsLoading(true);
+
+    if (isManualRetry || !hasPreviousData) setError(null);
 
     const merchantQuery = [searchQuery.trim(), localSearch.trim()].filter(Boolean).join(' ').trim();
+
+    const seq = fetchSeq.current + 1;
+    fetchSeq.current = seq;
 
     const res = await listTransactions({
       from: dateFrom ? parseISODateInputAsISO(dateFrom) : undefined,
@@ -101,15 +121,21 @@ export default function Transactions() {
       offset: 0,
     });
 
+    // Only apply if this is the latest fetch.
+    if (fetchSeq.current !== seq) return;
+
     if (!res.ok) {
       setError(toUserFacingError(res));
       setIsLoading(false);
+      setIsRefreshing(false);
       return;
     }
 
     setItems(res.data.items || []);
     setPage(res.data.page || null);
+    setError(null);
     setIsLoading(false);
+    setIsRefreshing(false);
   }
 
   useEffect(() => {
@@ -138,6 +164,7 @@ export default function Transactions() {
     const max = safeNumber(maxAmount);
 
     return (items || []).filter((t) => {
+      if (t.__pending) return true; // keep pending visible regardless of min/max filters
       const amtAbs = Math.abs(Number(t.amount || 0));
       const matchesMin = min === null || amtAbs >= min;
       const matchesMax = max === null || amtAbs <= max;
@@ -146,6 +173,8 @@ export default function Transactions() {
   }, [items, minAmount, maxAmount]);
 
   async function onCreate() {
+    setCreateError(null);
+
     const amount = safeNumber(newAmount);
     if (amount === null) {
       addAlert({ type: 'error', title: 'Invalid amount', message: 'Please enter a valid number.' });
@@ -162,7 +191,21 @@ export default function Transactions() {
 
     const occurredAt = newOccurredAt ? parseISODateInputAsISO(newOccurredAt) : new Date().toISOString();
 
+    // Optimistic insert (pending row) to show immediate progress.
+    const tempId = makeTempId();
+    const optimistic = {
+      id: tempId,
+      merchant: newMerchant.trim(),
+      category: newCategory.trim(),
+      currency: String(newCurrency || 'USD').toUpperCase(),
+      amount,
+      occurred_at: occurredAt,
+      description: newDescription.trim() || undefined,
+      __pending: true,
+    };
+
     setIsCreating(true);
+    setItems((prev) => [optimistic, ...(prev || [])]);
 
     const res = await createTransaction({
       amount,
@@ -174,11 +217,16 @@ export default function Transactions() {
     });
 
     if (!res.ok) {
+      // Rollback optimistic insert
+      setItems((prev) => (prev || []).filter((t) => t.id !== tempId));
       setIsCreating(false);
+
+      const msg = toUserFacingError(res);
+      setCreateError(msg);
       addAlert({
         type: 'error',
         title: 'Could not create transaction',
-        message: toUserFacingError(res),
+        message: msg,
       });
       return;
     }
@@ -199,8 +247,12 @@ export default function Transactions() {
     setNewDescription('');
 
     // Refetch from server to ensure table matches backend source of truth.
+    // Keep UI stable while refetching (we already inserted a pending row).
     setRefreshTick((t) => t + 1);
   }
+
+  const showInitialBlockingLoad = isLoading && items.length === 0;
+  const showBlockingError = Boolean(error) && items.length === 0;
 
   return (
     <div>
@@ -230,6 +282,19 @@ export default function Transactions() {
               <strong style={{ fontSize: 13 }}>Create transaction</strong>
               <span className="small-muted">Saved to your account</span>
             </div>
+
+            {createError ? (
+              <div style={{ marginTop: 10 }}>
+                <InlineErrorBanner
+                  title="Could not save transaction"
+                  description={createError}
+                  actionLabel="Try again"
+                  onAction={onCreate}
+                  isBusy={isCreating}
+                  tone="error"
+                />
+              </div>
+            ) : null}
 
             <div style={{ marginTop: 10, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(12, 1fr)' }}>
               <div style={{ gridColumn: 'span 4' }}>
@@ -396,15 +461,29 @@ export default function Transactions() {
           </div>
         </div>
 
+        {/* Non-blocking error banner if we have last-known data */}
+        {error && items.length > 0 ? (
+          <div style={{ marginTop: 12 }}>
+            <InlineErrorBanner
+              title="Could not refresh transactions"
+              description={error}
+              actionLabel="Retry"
+              onAction={() => refetch({ isManualRetry: true })}
+              isBusy={isRefreshing}
+              tone="warning"
+            />
+          </div>
+        ) : null}
+
         <div style={{ marginTop: 12 }}>
-          {isLoading ? (
+          {showInitialBlockingLoad ? (
             <LoadingState message="Fetching transactions…" />
-          ) : error ? (
+          ) : showBlockingError ? (
             <EmptyState
               title="Could not load transactions"
               description={error}
               actionLabel="Retry"
-              onAction={() => setRefreshTick((t) => t + 1)}
+              onAction={() => refetch({ isManualRetry: true })}
             />
           ) : clientSideFiltered.length === 0 ? (
             <EmptyState
@@ -418,41 +497,56 @@ export default function Transactions() {
               onAction={
                 hasAnyLocalFilter
                   ? () => {
-                      setLocalSearch('');
-                      setCategory('all');
-                      setDateFrom('');
-                      setDateTo('');
-                      setMinAmount('');
-                      setMaxAmount('');
-                    }
+                    setLocalSearch('');
+                    setCategory('all');
+                    setDateFrom('');
+                    setDateTo('');
+                    setMinAmount('');
+                    setMaxAmount('');
+                  }
                   : undefined
               }
             />
           ) : (
-            <table className="table" aria-label="Transactions table">
-              <thead>
-                <tr>
-                  <th>Merchant</th>
-                  <th>Category</th>
-                  <th>Date</th>
-                  <th style={{ textAlign: 'right' }}>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clientSideFiltered.map((t) => (
-                  <tr key={t.id}>
-                    <td>{t.merchant}</td>
-                    <td>{t.category}</td>
-                    <td className="mono">
-                      {t.occurred_at ? String(t.occurred_at).slice(0, 10) : '—'}
-                    </td>
-                    <td style={{ textAlign: 'right' }} className="mono">
-                      {currency(Number(t.amount || 0), t.currency || 'USD')}
-                    </td>
+            <div style={isRefreshing ? { opacity: 0.72 } : undefined} aria-busy={isRefreshing ? 'true' : 'false'}>
+              <table className="table" aria-label="Transactions table">
+                <thead>
+                  <tr>
+                    <th>Merchant</th>
+                    <th>Category</th>
+                    <th>Date</th>
+                    <th style={{ textAlign: 'right' }}>Amount</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {clientSideFiltered.map((t) => (
+                    <tr key={t.id} style={t.__pending ? { opacity: 0.75 } : undefined}>
+                      <td>
+                        {t.merchant}
+                        {t.__pending ? (
+                          <span className="small-muted" style={{ marginLeft: 8 }}>
+                            • Saving…
+                          </span>
+                        ) : null}
+                      </td>
+                      <td>{t.category}</td>
+                      <td className="mono">
+                        {t.occurred_at ? String(t.occurred_at).slice(0, 10) : '—'}
+                      </td>
+                      <td style={{ textAlign: 'right' }} className="mono">
+                        {currency(Number(t.amount || 0), t.currency || 'USD')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {isRefreshing ? (
+                <div className="small-muted" style={{ marginTop: 10 }}>
+                  Refreshing transactions…
+                </div>
+              ) : null}
+            </div>
           )}
         </div>
 

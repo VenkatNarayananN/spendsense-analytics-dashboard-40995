@@ -1,16 +1,24 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PageSection from '../components/PageSection';
 import { useAlerts } from '../context/AlertsContext';
 import LineChartPlaceholder from '../components/charts/LineChartPlaceholder';
 import BarChartPlaceholder from '../components/charts/BarChartPlaceholder';
 import LoadingState from '../components/LoadingState';
 import EmptyState from '../components/EmptyState';
+import InlineErrorBanner from '../components/InlineErrorBanner';
 
 function rangeLabel(range) {
   if (range === '7d') return 'Last 7 days';
   if (range === '30d') return 'Last 30 days';
   if (range === '90d') return 'Last 90 days';
   return 'Last 30 days';
+}
+
+function toUserFacingError(e) {
+  if (!e) return 'Something went wrong.';
+  if (typeof e === 'string') return e;
+  if (typeof e?.error === 'string') return e.error;
+  return 'Something went wrong.';
 }
 
 // PUBLIC_INTERFACE
@@ -22,14 +30,16 @@ export default function Insights() {
   const [segment, setSegment] = useState('All categories');
 
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    setIsLoading(true);
-    const t = window.setTimeout(() => setIsLoading(false), 650);
-    return () => window.clearTimeout(t);
-  }, [timeRange, segment]);
+  // Placeholder "data"
+  const [insightsData, setInsightsData] = useState(null);
 
-  const insights = useMemo(() => ([
+  // Helps avoid UI flicker on rapid changes
+  const seqRef = useRef(0);
+
+  const baseInsights = useMemo(() => ([
     {
       title: 'Dining spike detected',
       body: 'Dining spend is +22% over the last 14 days. Consider setting a soft cap alert.',
@@ -58,9 +68,51 @@ export default function Insights() {
   ]), []);
 
   const filteredInsights = useMemo(() => {
-    if (segment === 'All categories') return insights;
-    return insights.filter((i) => i.segment === segment);
-  }, [insights, segment]);
+    const src = insightsData || [];
+    if (segment === 'All categories') return src;
+    return src.filter((i) => i.segment === segment);
+  }, [insightsData, segment]);
+
+  async function fetchInsights({ isManualRetry = false } = {}) {
+    const hasPreviousData = Array.isArray(insightsData) && insightsData.length > 0;
+
+    if (hasPreviousData) setIsRefreshing(true);
+    else setIsLoading(true);
+
+    if (isManualRetry || !hasPreviousData) setError(null);
+
+    const seq = seqRef.current + 1;
+    seqRef.current = seq;
+
+    // Simulated fetch; keep consistent wrappers as if this were a real API call.
+    await new Promise((r) => setTimeout(r, 650));
+
+    // Small chance of simulated error to exercise error UI during manual testing.
+    // (Unit tests will mock this component state directly.)
+    const shouldFail = Math.random() < 0.08;
+
+    if (seqRef.current !== seq) return;
+
+    if (shouldFail) {
+      setError(toUserFacingError('Unable to generate insights right now. Please try again.'));
+      setIsLoading(false);
+      setIsRefreshing(false);
+      return;
+    }
+
+    setInsightsData(baseInsights);
+    setError(null);
+    setIsLoading(false);
+    setIsRefreshing(false);
+  }
+
+  useEffect(() => {
+    fetchInsights();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange, segment]);
+
+  const showInitialBlockingLoad = isLoading && !insightsData;
+  const showBlockingError = Boolean(error) && !insightsData;
 
   return (
     <div>
@@ -115,23 +167,52 @@ export default function Insights() {
           </div>
         </div>
 
+        {/* Non-blocking error banner if we have last-known data */}
+        {error && insightsData ? (
+          <div style={{ marginTop: 12 }}>
+            <InlineErrorBanner
+              title="Insights may be out of date"
+              description={error}
+              actionLabel="Retry"
+              onAction={() => fetchInsights({ isManualRetry: true })}
+              isBusy={isRefreshing}
+              tone="warning"
+            />
+          </div>
+        ) : null}
+
         <div style={{ marginTop: 12 }}>
-          {isLoading ? (
+          {showInitialBlockingLoad ? (
             <LoadingState message="Generating insights…" />
+          ) : showBlockingError ? (
+            <EmptyState
+              title="Could not load insights"
+              description={error}
+              actionLabel="Retry"
+              onAction={() => fetchInsights({ isManualRetry: true })}
+            />
           ) : (
-            <div className="grid">
-              <div style={{ gridColumn: 'span 7' }}>
-                <LineChartPlaceholder title={`Forecast vs. actual spend · ${rangeLabel(timeRange)}`} />
+            <div style={isRefreshing ? { opacity: 0.72 } : undefined} aria-busy={isRefreshing ? 'true' : 'false'}>
+              <div className="grid">
+                <div style={{ gridColumn: 'span 7' }}>
+                  <LineChartPlaceholder title={`Forecast vs. actual spend · ${rangeLabel(timeRange)}`} />
+                </div>
+                <div style={{ gridColumn: 'span 5' }}>
+                  <BarChartPlaceholder title={`Top categories · ${rangeLabel(timeRange)} · ${segment}`} />
+                </div>
               </div>
-              <div style={{ gridColumn: 'span 5' }}>
-                <BarChartPlaceholder title={`Top categories · ${rangeLabel(timeRange)} · ${segment}`} />
-              </div>
+
+              {isRefreshing ? (
+                <div className="small-muted" style={{ marginTop: 10 }}>
+                  Refreshing insights…
+                </div>
+              ) : null}
             </div>
           )}
         </div>
 
         <div className="grid" style={{ marginTop: 14 }}>
-          {isLoading ? null : filteredInsights.length === 0 ? (
+          {(showInitialBlockingLoad || showBlockingError) ? null : filteredInsights.length === 0 ? (
             <div style={{ gridColumn: 'span 12' }}>
               <EmptyState
                 title="No insights for this segment"
