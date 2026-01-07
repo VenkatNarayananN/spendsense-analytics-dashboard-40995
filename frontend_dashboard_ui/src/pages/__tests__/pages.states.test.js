@@ -1,11 +1,16 @@
 import React from 'react';
 import { act, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 import Dashboard from '../Dashboard';
 import Transactions from '../Transactions';
 import Alerts from '../Alerts';
 import Insights from '../Insights';
 import Settings from '../Settings';
+
+function renderWithRouter(ui) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 jest.mock('../../config/supabaseClient', () => {
   return {
@@ -63,8 +68,8 @@ describe('page loading/error states', () => {
   test('Dashboard renders loading then error state', async () => {
     backendApi.getAnalyticsSummary.mockResolvedValue({ ok: false, error: 'Nope' });
 
-    render(<Dashboard />);
-    expect(screen.getByText(/Loading/i)).toBeInTheDocument();
+    renderWithRouter(<Dashboard />);
+    expect(screen.getAllByText(/Loading/i).length).toBeGreaterThan(0);
 
     // Wait for effects to settle; after the failed fetch it should show an error EmptyState.
     await act(async () => {});
@@ -75,8 +80,8 @@ describe('page loading/error states', () => {
   test('Transactions renders loading then error state', async () => {
     backendApi.listTransactions.mockResolvedValue({ ok: false, error: 'Nope' });
 
-    render(<Transactions />);
-    expect(screen.getByText(/Loading/i)).toBeInTheDocument();
+    renderWithRouter(<Transactions />);
+    expect(screen.getAllByText(/Loading/i).length).toBeGreaterThan(0);
 
     await act(async () => {});
     expect(screen.getByText(/Could not load transactions/i)).toBeInTheDocument();
@@ -86,8 +91,8 @@ describe('page loading/error states', () => {
   test('Alerts renders loading then error state', async () => {
     backendApi.listAlerts.mockResolvedValue({ ok: false, error: 'Nope' });
 
-    render(<Alerts />);
-    expect(screen.getByText(/Loading/i)).toBeInTheDocument();
+    renderWithRouter(<Alerts />);
+    expect(screen.getAllByText(/Loading/i).length).toBeGreaterThan(0);
 
     await act(async () => {});
     expect(screen.getByText(/Could not load alerts/i)).toBeInTheDocument();
@@ -101,8 +106,8 @@ describe('page loading/error states', () => {
     const originalRandom = Math.random;
     Math.random = () => 0.01; // < 0.08 => fail
 
-    render(<Insights />);
-    expect(screen.getByText(/Loading/i)).toBeInTheDocument();
+    renderWithRouter(<Insights />);
+    expect(screen.getAllByText(/Loading/i).length).toBeGreaterThan(0);
 
     await act(async () => {
       jest.advanceTimersByTime(700);
@@ -118,8 +123,8 @@ describe('page loading/error states', () => {
   test('Settings renders loading then error state', async () => {
     backendApi.getCurrentUserProfile.mockResolvedValue({ ok: false, error: 'Nope' });
 
-    render(<Settings />);
-    expect(screen.getByText(/Loading/i)).toBeInTheDocument();
+    renderWithRouter(<Settings />);
+    expect(screen.getAllByText(/Loading/i).length).toBeGreaterThan(0);
 
     await act(async () => {});
     expect(screen.getByText(/Could not load profile/i)).toBeInTheDocument();

@@ -1,7 +1,7 @@
 import { apiFetch } from './apiClient';
 
 jest.mock('../config/env', () => ({
-  getBackendUrl: () => 'http://localhost:3001',
+  getApiBaseUrl: () => 'http://localhost:3001',
 }));
 
 const mockGetSession = jest.fn();
@@ -57,7 +57,7 @@ describe('apiClient', () => {
   });
 
   test('does not attach Authorization header for non-/api paths', async () => {
-    getSessionMock.mockResolvedValue({
+    mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'token123' } },
       error: null,
     });
