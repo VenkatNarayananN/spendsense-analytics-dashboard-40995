@@ -132,3 +132,48 @@ export async function getCurrentUserProfile() {
   const user = res.data?.data?.user || null;
   return { ok: true, data: { user } };
 }
+
+function toUserFacingErrorMessage(resOrError) {
+  if (!resOrError) return 'Something went wrong.';
+  if (typeof resOrError === 'string') return resOrError;
+
+  const status = resOrError?.status;
+  const message = resOrError?.error || resOrError?.message;
+
+  // If backend validation doesn't yet support these fields, be explicit but friendly.
+  if (status === 400 || status === 404) {
+    return (
+      'We couldn’t save these preferences yet (your server may not support them). ' +
+      'You can continue using the app, and try again later.'
+    );
+  }
+
+  if (message) return message;
+  return 'Something went wrong.';
+}
+
+// PUBLIC_INTERFACE
+export async function updateCurrentUserProfile(patch) {
+  /**
+   * Update the authenticated user's profile via PUT /api/users/me.
+   *
+   * Note: Backend OpenAPI documents only {name, avatar_url}, but we intentionally allow
+   * extra preference keys for forward compatibility (onboarding). If backend rejects
+   * with 400/404, caller should show a friendly message and let the user proceed.
+   */
+  const res = await apiFetch('/api/users/me', {
+    method: 'PUT',
+    redirectOn401: true,
+    retryOn401: true,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch || {}),
+  });
+
+  if (!res.ok) {
+    return { ...res, error: toUserFacingErrorMessage(res) };
+  }
+
+  // Expected: { success: true, data: { user } }
+  const user = res.data?.data?.user || null;
+  return { ok: true, data: { user } };
+}

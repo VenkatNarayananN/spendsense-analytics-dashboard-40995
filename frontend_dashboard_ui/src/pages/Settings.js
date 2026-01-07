@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import PageSection from '../components/PageSection';
 import { useUI } from '../context/UIContext';
 import { getBackendUrl, getEnv } from '../config/env';
@@ -18,6 +19,7 @@ function toUserFacingError(e) {
 export default function Settings() {
   /** Settings page for UI preferences, basic profile info, and environment diagnostics. */
   const { theme, toggleTheme } = useUI();
+  const navigate = useNavigate();
   const backendUrl = getBackendUrl();
 
   const frontendUrl = getEnv('REACT_APP_FRONTEND_URL', undefined);
@@ -72,9 +74,14 @@ export default function Settings() {
         title="Settings"
         subtitle="Preferences and configuration."
         actions={
-          <button type="button" className="btn btn-primary" onClick={toggleTheme}>
-            Toggle theme
-          </button>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <button type="button" className="btn" onClick={() => navigate('/onboarding')}>
+              Edit onboarding preferences
+            </button>
+            <button type="button" className="btn btn-primary" onClick={toggleTheme}>
+              Toggle theme
+            </button>
+          </div>
         }
       >
         <div className="grid">

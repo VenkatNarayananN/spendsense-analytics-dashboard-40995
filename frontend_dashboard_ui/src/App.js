@@ -15,6 +15,7 @@ import Transactions from './pages/Transactions';
 import Insights from './pages/Insights';
 import Alerts from './pages/Alerts';
 import Settings from './pages/Settings';
+import Onboarding from './pages/Onboarding';
 import AuthCallback from './pages/AuthCallback';
 import NotFound from './pages/NotFound';
 
@@ -79,6 +80,15 @@ function App() {
                   element={(
                     <ProtectedRoute>
                       <Settings />
+                    </ProtectedRoute>
+                  )}
+                />
+
+                <Route
+                  path="/onboarding"
+                  element={(
+                    <ProtectedRoute>
+                      <Onboarding />
                     </ProtectedRoute>
                   )}
                 />
