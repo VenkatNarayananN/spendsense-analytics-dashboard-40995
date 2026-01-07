@@ -8,6 +8,7 @@ import { subscribeToNewTransactions } from '../services/transactionsRealtime';
 import LoadingState from '../components/LoadingState';
 import EmptyState from '../components/EmptyState';
 import { convertAmount, fetchLatestFxRates, formatMoney } from '../services/fxRates';
+import { getAnalyticsSummary } from '../services/backendApi';
 
 function percent(n) {
   const sign = n >= 0 ? '+' : '';
@@ -34,18 +35,36 @@ function moneySkeleton() {
   return '—';
 }
 
+function isoDateOnly(d) {
+  // Backend expects YYYY-MM-DD for analytics date range per OpenAPI examples.
+  return d.toISOString().slice(0, 10);
+}
+
+function computeRangeParams(timeRange) {
+  const to = new Date();
+  const from = new Date(to);
+  if (timeRange === '7d') from.setDate(to.getDate() - 7);
+  else if (timeRange === '30d') from.setDate(to.getDate() - 30);
+  else if (timeRange === '90d') from.setDate(to.getDate() - 90);
+  else return { from: undefined, to: undefined };
+
+  return { from: isoDateOnly(from), to: isoDateOnly(to) };
+}
+
 // PUBLIC_INTERFACE
 export default function Dashboard() {
-  /** Dashboard overview page with KPI cards and recent activity placeholder data. */
+  /** Dashboard overview page with KPI cards, backed by analytics summary endpoint. */
   const { searchQuery, currency: selectedCurrency, setCurrency, supportedCurrencies } = useUI();
   const { addAlert } = useAlerts();
 
   const [timeRange, setTimeRange] = useState('30d');
 
-  // Simulated loading state for primary panels
+  // Analytics state
+  const [summary, setSummary] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
-  // Used to trigger re-fetches later when dashboard data becomes API-driven.
+  // Used to trigger re-fetches later when dashboard data refreshes.
   const [refreshTick, setRefreshTick] = useState(0);
 
   // FX state (kept local to Dashboard per requirement; could be promoted to context later).
@@ -64,13 +83,13 @@ export default function Dashboard() {
     const loading = Boolean(fx?.isLoading);
     const hasError = Boolean(fx?.error);
 
-    // If we're loading and don't have previous rates yet, treat as "initial load".
+    // If we're loading and don't have previous rates yet, treat as “initial load”.
     const initialLoading = loading && !fx?.rates;
 
     // When we have cached/previous rates, we can keep showing values while refreshing in background.
     const refreshing = loading && Boolean(fx?.rates);
 
-    // Only show "no conversion possible" placeholders when we truly cannot convert and user asked for non-USD.
+    // Only show “no conversion possible” placeholders when we truly cannot convert and user asked for non-USD.
     const showPlaceholders = !canConvert && selectedCurrency !== 'USD';
 
     return { loading, initialLoading, refreshing, hasError, showPlaceholders };
@@ -100,11 +119,27 @@ export default function Dashboard() {
     }
   }
 
+  async function loadAnalytics() {
+    setIsLoading(true);
+    setLoadError(null);
+
+    const range = computeRangeParams(timeRange);
+    const res = await getAnalyticsSummary(range);
+
+    if (!res.ok) {
+      setLoadError(res.error || 'Failed to load analytics summary.');
+      setIsLoading(false);
+      return;
+    }
+
+    setSummary(res.data.summary || null);
+    setIsLoading(false);
+  }
+
   useEffect(() => {
-    // Simulate initial fetch for KPI/overview data.
-    const t = window.setTimeout(() => setIsLoading(false), 650);
-    return () => window.clearTimeout(t);
-  }, [timeRange]);
+    loadAnalytics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange, refreshTick]);
 
   useEffect(() => {
     const unsubscribe = subscribeToNewTransactions(() => {
@@ -116,8 +151,7 @@ export default function Dashboard() {
         message: `A new transaction was added at ${ts}.`,
       });
 
-      // Trigger a refresh. Today this is a no-op visually (placeholder data),
-      // but it ensures the wiring is ready once we fetch real KPIs/recent activity.
+      // Trigger a refresh of analytics.
       setRefreshTick((t2) => t2 + 1);
     });
 
@@ -170,72 +204,72 @@ export default function Dashboard() {
   }, [fx.rates, selectedCurrency]);
 
   const kpis = useMemo(() => {
-    // Light “reaction” to timeRange selection (still placeholder data).
-    const factor = timeRange === '7d' ? 0.35 : timeRange === '90d' ? 1.75 : 1.0;
-
-    // KPI base amounts are authored in USD.
-    const monthlySpendUsd = 2480.12 * factor;
-    const netCashflowUsd = 310.55 * (factor * 0.9);
-
     // If conversion isn't possible (missing rates) and user selected non-USD, return placeholders.
     if (fxUi.showPlaceholders) {
       return [
-        { label: 'Monthly spend', value: moneySkeleton(), sub: `${percent(0.06)} vs last month` },
-        { label: 'Net cashflow', value: moneySkeleton(), sub: 'Income − Expenses' },
-        { label: 'Savings rate', value: `${Math.round(18 / factor)}%`, sub: 'Target: 20%' },
-        { label: 'At-risk categories', value: timeRange === '7d' ? '1' : '2', sub: 'Dining, Subscriptions' },
+        { label: 'Total spend', value: moneySkeleton(), sub: rangeLabel(timeRange) },
+        { label: 'Avg daily spend', value: moneySkeleton(), sub: 'Computed from transactions' },
+        { label: 'Top category', value: moneySkeleton(), sub: 'By total spend' },
+        { label: 'Recent merchant', value: moneySkeleton(), sub: 'Most recent activity' },
       ];
     }
 
-    const monthlySpend = convertAmount({
-      amount: monthlySpendUsd,
-      from: 'USD',
-      to: selectedCurrency,
-      ratesByCode: fx?.rates,
-    });
+    // Prefer backend summary; fall back to placeholders when absent.
+    const totalSpendUsd = Number(summary?.total_spend);
+    const avgDailyUsd = Number(summary?.average_daily_spend);
 
-    const netCashflow = convertAmount({
-      amount: netCashflowUsd,
-      from: 'USD',
-      to: selectedCurrency,
-      ratesByCode: fx?.rates,
-    });
+    const topCategory = summary?.top_categories?.[0]?.category || '—';
+    const topCategoryTotalUsd = Number(summary?.top_categories?.[0]?.total);
+    const recentMerchant = summary?.recent_merchants?.[0] || '—';
+
+    const totalSpend = Number.isFinite(totalSpendUsd)
+      ? convertAmount({ amount: totalSpendUsd, from: 'USD', to: selectedCurrency, ratesByCode: fx?.rates })
+      : null;
+
+    const avgDaily = Number.isFinite(avgDailyUsd)
+      ? convertAmount({ amount: avgDailyUsd, from: 'USD', to: selectedCurrency, ratesByCode: fx?.rates })
+      : null;
+
+    const topCatTotal = Number.isFinite(topCategoryTotalUsd)
+      ? convertAmount({ amount: topCategoryTotalUsd, from: 'USD', to: selectedCurrency, ratesByCode: fx?.rates })
+      : null;
+
+    const rangeText = summary?.range?.from && summary?.range?.to
+      ? `${summary.range.from} → ${summary.range.to}`
+      : rangeLabel(timeRange);
 
     return [
-      { label: 'Monthly spend', value: formatMoney(monthlySpend, selectedCurrency), sub: `${percent(0.06)} vs last month` },
-      { label: 'Net cashflow', value: formatMoney(netCashflow, selectedCurrency), sub: 'Income − Expenses' },
-      { label: 'Savings rate', value: `${Math.round(18 / factor)}%`, sub: 'Target: 20%' },
-      { label: 'At-risk categories', value: timeRange === '7d' ? '1' : '2', sub: 'Dining, Subscriptions' },
+      {
+        label: 'Total spend',
+        value: totalSpend === null ? moneySkeleton() : formatMoney(totalSpend, selectedCurrency),
+        sub: rangeText,
+      },
+      {
+        label: 'Avg daily spend',
+        value: avgDaily === null ? moneySkeleton() : formatMoney(avgDaily, selectedCurrency),
+        sub: 'Based on selected range',
+      },
+      {
+        label: 'Top category',
+        value: topCategory,
+        sub: topCatTotal === null ? '—' : `${formatMoney(topCatTotal, selectedCurrency)}`,
+      },
+      {
+        label: 'Recent merchant',
+        value: recentMerchant,
+        sub: 'Most recent merchants list',
+      },
     ];
-  }, [timeRange, selectedCurrency, fx?.rates, fxUi.showPlaceholders]);
-
-  const recent = useMemo(() => ([
-    { id: 't1', merchant: 'Aurora Coffee', category: 'Dining', amountUsd: -6.45, date: 'Today' },
-    { id: 't2', merchant: 'Metro Transit', category: 'Transport', amountUsd: -2.50, date: 'Yesterday' },
-    { id: 't3', merchant: 'Nimbus Payroll', category: 'Income', amountUsd: 2250.00, date: '2 days ago' },
-    { id: 't4', merchant: 'StreamFlix', category: 'Subscriptions', amountUsd: -14.99, date: '3 days ago' },
-  ]), [refreshTick]);
-
-  const filteredRecent = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return recent;
-    return recent.filter((r) =>
-      `${r.merchant} ${r.category} ${r.date}`.toLowerCase().includes(q)
-    );
-  }, [recent, searchQuery]);
+  }, [timeRange, selectedCurrency, fx?.rates, fxUi.showPlaceholders, summary]);
 
   const chartPlaceholderNumbers = useMemo(() => {
     // These numbers are used only for placeholder annotations (not real charts yet).
-    // Base values authored in USD.
-    const baseSeriesUsd = timeRange === '7d'
-      ? [120, 95, 130, 140, 110, 150, 160]
-      : timeRange === '90d'
-        ? [420, 390, 460, 520, 480, 505, 560]
-        : [260, 240, 275, 290, 265, 310, 330];
+    // If backend summary exists, derive a stable approximation for labels.
+    const fallbackTotalUsd = 260 + (timeRange === '7d' ? 0 : timeRange === '90d' ? 300 : 120);
 
-    const totalUsd = baseSeriesUsd.reduce((a, b) => a + b, 0);
-    const avgUsd = totalUsd / baseSeriesUsd.length;
-    const maxUsd = Math.max(...baseSeriesUsd);
+    const totalUsd = Number.isFinite(Number(summary?.total_spend)) ? Number(summary?.total_spend) : fallbackTotalUsd;
+    const avgUsd = Number.isFinite(Number(summary?.average_daily_spend)) ? Number(summary?.average_daily_spend) : totalUsd / 30;
+    const maxUsd = Math.max(avgUsd * 1.6, avgUsd);
 
     if (fxUi.showPlaceholders) {
       return {
@@ -254,13 +288,13 @@ export default function Dashboard() {
       avgLabel: formatMoney(avg, selectedCurrency),
       maxLabel: formatMoney(max, selectedCurrency),
     };
-  }, [timeRange, selectedCurrency, fx?.rates, fxUi.showPlaceholders]);
+  }, [timeRange, selectedCurrency, fx?.rates, fxUi.showPlaceholders, summary]);
 
   return (
     <div>
       <PageSection
         title="Overview"
-        subtitle={`KPIs and trends · ${rangeLabel(timeRange)} (placeholder)`}
+        subtitle={`KPIs and trends · ${rangeLabel(timeRange)}`}
         actions={(
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <div className="chip-group" role="group" aria-label="Dashboard time range">
@@ -346,6 +380,13 @@ export default function Dashboard() {
 
         {isLoading ? (
           <LoadingState message="Refreshing dashboard KPIs…" />
+        ) : loadError ? (
+          <EmptyState
+            title="Could not load dashboard"
+            description={loadError}
+            actionLabel="Retry"
+            onAction={() => setRefreshTick((t) => t + 1)}
+          />
         ) : (
           <div className="grid" style={fxUi.loading ? { opacity: 0.9 } : undefined} aria-busy={fxUi.loading ? 'true' : 'false'}>
             {kpis.map((k) => (
@@ -373,7 +414,7 @@ export default function Dashboard() {
           />
           <div className="card" style={{ marginTop: 12 }}>
             <div className="small-muted">
-              Tip: Connect <span className="mono">REACT_APP_BACKEND_URL</span> to fetch real analytics.
+              Charts remain placeholders; KPIs above are fetched from <span className="mono">/api/analytics/summary</span>.
             </div>
           </div>
         </div>
@@ -394,72 +435,15 @@ export default function Dashboard() {
 
       <PageSection
         title="Recent transactions"
-        subtitle={searchQuery ? `Filtered by “${searchQuery}”` : 'Latest activity across your accounts'}
+        subtitle={searchQuery ? `Filtered by “${searchQuery}”` : 'Latest activity across your accounts (placeholder)'}
         actions={<a className="btn" href="/transactions">View all</a>}
       >
-        {isLoading ? (
-          <LoadingState message="Loading recent activity…" />
-        ) : filteredRecent.length === 0 ? (
-          <EmptyState
-            title="No transactions match"
-            description="Try clearing search or widening your time range."
-            actionLabel="Clear search"
-            onAction={() => {
-              // Global search lives in UIContext; we can't set it here without adding new API.
-              // So we provide a gentle UX action: scroll user to the topbar search.
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-          />
-        ) : (
-          <table className="table" aria-label="Recent transactions table">
-            <thead>
-              <tr>
-                <th>Merchant</th>
-                <th>Category</th>
-                <th>Date</th>
-                <th style={{ textAlign: 'right' }}>Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRecent.map((r) => {
-                // If conversion isn't possible for the selected currency, show a stable placeholder.
-                if (fxUi.showPlaceholders) {
-                  return (
-                    <tr key={r.id}>
-                      <td>{r.merchant}</td>
-                      <td>{r.category}</td>
-                      <td>{r.date}</td>
-                      <td style={{ textAlign: 'right' }} className="mono">
-                        {moneySkeleton()}
-                      </td>
-                    </tr>
-                  );
-                }
-
-                const converted = convertAmount({
-                  amount: r.amountUsd,
-                  from: 'USD',
-                  to: selectedCurrency,
-                  ratesByCode: fx?.rates,
-                });
-
-                const absFormatted = formatMoney(Math.abs(converted), selectedCurrency);
-                const display = converted < 0 ? `-${absFormatted}` : absFormatted;
-
-                return (
-                  <tr key={r.id}>
-                    <td>{r.merchant}</td>
-                    <td>{r.category}</td>
-                    <td>{r.date}</td>
-                    <td style={{ textAlign: 'right' }} className="mono">
-                      {display}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+        {/* Keep this section placeholder for now to preserve existing UX until backend exposes a dedicated recent endpoint. */}
+        <div className="card">
+          <div className="small-muted">
+            Recent transactions table is still placeholder; Transactions page is fully API-backed.
+          </div>
+        </div>
       </PageSection>
     </div>
   );

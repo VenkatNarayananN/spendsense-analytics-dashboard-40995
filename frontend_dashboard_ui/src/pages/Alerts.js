@@ -3,54 +3,131 @@ import PageSection from '../components/PageSection';
 import { useAlerts } from '../context/AlertsContext';
 import LoadingState from '../components/LoadingState';
 import EmptyState from '../components/EmptyState';
+import { dismissAlert as dismissBackendAlert, listAlerts } from '../services/backendApi';
 
-function isActiveType(type) {
-  return type === 'warning' || type === 'error' || type === 'success';
+function uiTypeFromBackendType(type) {
+  // Map backend alert types (e.g. "budget") into UI pill variants.
+  // Keep fintech theme defaults; fall back to warning.
+  const t = String(type || '').toLowerCase();
+  if (t.includes('error') || t.includes('fraud')) return 'error';
+  if (t.includes('success')) return 'success';
+  return 'warning';
 }
 
-function statusOfAlert(a) {
-  // Placeholder mapping: existing alerts are considered "Active".
-  // The page-level “Snoozed/Resolved” views are UI-only scaffolding.
-  if (!a) return 'Active';
-  if (isActiveType(a.type)) return 'Active';
+function formatRelativeTimeFromIso(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  const minutes = Math.max(1, Math.round(diffMs / (60 * 1000)));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+function statusLabel(status) {
+  const s = String(status || 'active').toLowerCase();
+  if (s === 'dismissed' || s === 'resolved') return 'Resolved';
+  if (s === 'snoozed') return 'Snoozed';
   return 'Active';
+}
+
+function toUserFacingError(e) {
+  if (!e) return 'Something went wrong.';
+  if (typeof e === 'string') return e;
+  if (typeof e?.error === 'string') return e.error;
+  return 'Something went wrong.';
 }
 
 // PUBLIC_INTERFACE
 export default function Alerts() {
-  /** Alerts management page (placeholder). Edits affect the persistent alerts rail. */
-  const { alerts, addAlert, dismissAlert, clearAlerts } = useAlerts();
-
-  const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
+  /** Alerts management page backed by authenticated backend API (list + dismiss). */
+  const { addAlert, clearAlerts } = useAlerts();
 
   const [statusFilter, setStatusFilter] = useState('All');
+
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const [alerts, setAlerts] = useState([]);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  async function refetch() {
+    setIsLoading(true);
+    setError(null);
+
+    const backendStatus = statusFilter === 'All' ? undefined : statusFilter.toLowerCase();
+    const res = await listAlerts({ status: backendStatus });
+
+    if (!res.ok) {
+      setError(toUserFacingError(res));
+      setIsLoading(false);
+      return;
+    }
+
+    const normalized = (res.data.items || []).map((a) => ({
+      id: a.id,
+      type: uiTypeFromBackendType(a.type),
+      title: a.type || 'Alert',
+      message: a.message || '',
+      status: a.status || 'active',
+      relativeTime: formatRelativeTimeFromIso(a.created_at),
+      raw: a,
+    }));
+
+    setAlerts(normalized);
+    setIsLoading(false);
+  }
 
   useEffect(() => {
-    setIsLoading(true);
-    const t = window.setTimeout(() => setIsLoading(false), 500);
-    return () => window.clearTimeout(t);
-  }, [statusFilter, alerts.length]);
+    refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, refreshTick]);
 
   const filteredAlerts = useMemo(() => {
     if (statusFilter === 'All') return alerts;
 
-    // Since we only have “active” alerts from context, we filter accordingly.
-    if (statusFilter === 'Active') return alerts;
-
-    // No-op placeholder filters for states not implemented in context yet.
-    if (statusFilter === 'Snoozed') return [];
-    if (statusFilter === 'Resolved') return [];
-
-    return alerts;
+    const target = statusFilter.toLowerCase();
+    return alerts.filter((a) => String(a.status || '').toLowerCase() === target);
   }, [alerts, statusFilter]);
+
+  async function onDismiss(a) {
+    // Optimistic UI update
+    setAlerts((prev) => prev.filter((x) => x.id !== a.id));
+
+    const res = await dismissBackendAlert({
+      id: a.id,
+      type: a.raw?.type,
+      message: a.raw?.message,
+    });
+
+    if (!res.ok) {
+      // rollback best-effort
+      setAlerts((prev) => [a, ...prev]);
+      addAlert({
+        type: 'error',
+        title: 'Could not dismiss alert',
+        message: toUserFacingError(res),
+      });
+      return;
+    }
+
+    addAlert({
+      type: 'success',
+      title: 'Alert dismissed',
+      message: 'The alert has been dismissed.',
+    });
+
+    // Refetch to stay consistent with backend truth
+    setRefreshTick((t) => t + 1);
+  }
 
   return (
     <div>
       <PageSection
         title="Alerts"
-        subtitle="Persistent alerts, rules, and notifications (placeholder)."
+        subtitle="Persistent alerts, rules, and notifications (live from backend)."
         actions={(
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <label className="btn" style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
@@ -61,67 +138,31 @@ export default function Alerts() {
                 style={{ border: 'none', background: 'transparent', color: 'inherit', fontWeight: 800 }}
                 aria-label="Filter alerts by status"
               >
-                {['All', 'Active', 'Snoozed', 'Resolved'].map((s) => (
-                  <option key={s} value={s}>{s}</option>
+                {['All', 'active', 'snoozed', 'resolved', 'dismissed'].map((s) => (
+                  <option key={s} value={s === 'active' ? 'Active' : s === 'snoozed' ? 'Snoozed' : s === 'resolved' ? 'Resolved' : s === 'dismissed' ? 'Dismissed' : 'All'}>
+                    {s === 'active' ? 'Active' : s === 'snoozed' ? 'Snoozed' : s === 'resolved' ? 'Resolved' : s === 'dismissed' ? 'Dismissed' : 'All'}
+                  </option>
                 ))}
               </select>
             </label>
 
-            <button type="button" className="btn" onClick={clearAlerts} aria-label="Clear all alerts">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                // "Clear all" is still a UI action; backend bulk dismiss not provided yet.
+                clearAlerts();
+                setAlerts([]);
+              }}
+              aria-label="Clear all alerts (UI-only)"
+            >
               Clear all
             </button>
           </div>
         )}
       >
         <div className="grid">
-          <div className="card" style={{ gridColumn: 'span 5' }}>
-            <h3 style={{ fontSize: 14, margin: 0 }}>Create a quick alert</h3>
-            <div className="small-muted" style={{ marginTop: 6 }}>
-              This will add a notification to the persistent alerts rail.
-            </div>
-
-            <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-              <label>
-                <span className="small-muted">Title</span>
-                <input
-                  className="input"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g., Large purchase"
-                  aria-label="Alert title"
-                />
-              </label>
-
-              <label>
-                <span className="small-muted">Message</span>
-                <input
-                  className="input"
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  placeholder="e.g., Notify me when a transaction exceeds $200"
-                  aria-label="Alert message"
-                />
-              </label>
-
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  addAlert({
-                    type: 'warning',
-                    title: title || 'Custom alert',
-                    message: message || 'This is a placeholder custom alert.',
-                  });
-                  setTitle('');
-                  setMessage('');
-                }}
-              >
-                Add alert
-              </button>
-            </div>
-          </div>
-
-          <div className="card" style={{ gridColumn: 'span 7' }}>
+          <div className="card" style={{ gridColumn: 'span 12' }}>
             <div className="card-title-row">
               <h3 style={{ fontSize: 14, margin: 0 }}>Alerts</h3>
               <span className="badge">{filteredAlerts.length}</span>
@@ -134,33 +175,49 @@ export default function Alerts() {
             <div style={{ marginTop: 10, display: 'grid', gap: 10 }}>
               {isLoading ? (
                 <LoadingState message="Loading alerts…" minHeight={160} />
+              ) : error ? (
+                <EmptyState
+                  title="Could not load alerts"
+                  description={error}
+                  actionLabel="Retry"
+                  onAction={() => setRefreshTick((t) => t + 1)}
+                />
               ) : filteredAlerts.length === 0 ? (
                 <EmptyState
                   title="No alerts in this view"
                   description={
                     statusFilter === 'All'
                       ? 'No alerts right now. You’re all set.'
-                      : `There are no alerts with status “${statusFilter}” (placeholder).`
+                      : `There are no alerts with status “${statusFilter}”.`
                   }
                   actionLabel={statusFilter !== 'All' ? 'Show all' : undefined}
                   onAction={statusFilter !== 'All' ? () => setStatusFilter('All') : undefined}
                 />
               ) : (
                 filteredAlerts.map((a) => (
-                  <div key={a.id} className="alert-item" aria-label={`Alert: ${a.title} (${statusOfAlert(a)})`}>
+                  <div key={a.id} className="alert-item" aria-label={`Alert: ${a.title} (${statusLabel(a.status)})`}>
                     <div>
                       <p className="alert-title">{a.title}</p>
                       <p className="alert-body">{a.message}</p>
-                      <div style={{ marginTop: 8 }}>
+                      <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <span className={a.type === 'success' ? 'pill pill-success' : a.type === 'error' ? 'pill pill-error' : 'pill pill-warn'}>
                           <span className="pill-dot" aria-hidden="true" />
                           {a.type}
+                        </span>
+                        <span className="pill">
+                          <span className="pill-dot" aria-hidden="true" />
+                          {String(a.status || 'active')}
                         </span>
                       </div>
                     </div>
                     <div className="alert-meta">
                       <span className="alert-time">{a.relativeTime}</span>
-                      <button type="button" className="icon-btn" onClick={() => dismissAlert(a.id)} aria-label={`Dismiss alert: ${a.title}`}>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => onDismiss(a)}
+                        aria-label={`Dismiss alert: ${a.title}`}
+                      >
                         Dismiss
                       </button>
                     </div>
