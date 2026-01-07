@@ -4,19 +4,19 @@ jest.mock('../config/env', () => ({
   getBackendUrl: () => 'http://localhost:3001',
 }));
 
-const getSessionMock = jest.fn();
+const mockGetSession = jest.fn();
 
 jest.mock('../config/supabaseClient', () => ({
   getSupabase: () => ({
     auth: {
-      getSession: (...args) => getSessionMock(...args),
+      getSession: (...args) => mockGetSession(...args),
     },
   }),
 }));
 
 describe('apiClient', () => {
   beforeEach(() => {
-    getSessionMock.mockReset();
+    mockGetSession.mockReset();
 
     global.fetch = jest.fn(async (_url, options) => {
       return {
@@ -29,7 +29,7 @@ describe('apiClient', () => {
   });
 
   test('attaches Authorization header for /api/* when session exists', async () => {
-    getSessionMock.mockResolvedValue({
+    mockGetSession.mockResolvedValue({
       data: { session: { access_token: 'token123' } },
       error: null,
     });
@@ -44,7 +44,7 @@ describe('apiClient', () => {
   });
 
   test('omits Authorization header for /api/* when no session exists', async () => {
-    getSessionMock.mockResolvedValue({
+    mockGetSession.mockResolvedValue({
       data: { session: null },
       error: null,
     });
